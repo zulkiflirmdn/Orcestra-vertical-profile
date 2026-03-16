@@ -136,6 +136,9 @@ Thumbs.db
 # Logs
 *.log
 
+# Ignore the entire Orcestra-vertical-profile directory
+/Orcestra-vertical-profile/
+
 # Data files (uncomment if you want to ignore data files)
 # *.csv
 # *.json
