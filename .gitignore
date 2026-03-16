@@ -139,11 +139,10 @@ Thumbs.db
 # Ignore the entire Orcestra-vertical-profile directory
 /Orcestra-vertical-profile/
 
-# Data files (uncomment if you want to ignore data files)
-# *.csv
-# *.json
-# *.pkl
-# *.h5
+# Ignore all NetCDF and Zarr data
+*.nc
+*.zarr/
+*.grib
 
 # Output images (if generated)
 # output.png
