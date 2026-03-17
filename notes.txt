@@ -1,0 +1,12 @@
+# Install the engine into your environment
+conda install -p /g/data/k10/zr7147/orcestra_env ipykernel --yes
+
+# Register it so Jupyter can see it
+/g/data/k10/zr7147/orcestra_env/bin/python -m ipykernel install --user --name orcestra_env --display-name "Python (ORCESTRA)"
+
+# Atctivate conda
+conda activate /g/data/k10/zr7147/orcestra_env
+
+# Request compute power
+qsub submit_job.sh
+qsub -I -P k10 -q normal -l ncpus=8,mem=32GB,jobfs=10GB,walltime=04:00:00,storage=gdata/k10
