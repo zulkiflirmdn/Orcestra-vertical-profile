@@ -1,12 +1,66 @@
-# Install the engine into your environment
+# Orcestra Vertical Profile Project Notes
+# =====================================
+
+# Environment Setup
+# -----------------
+
+# Install ipykernel into the conda environment
 conda install -p /g/data/k10/zr7147/orcestra_env ipykernel --yes
 
-# Register it so Jupyter can see it
+# Register the kernel for Jupyter
 /g/data/k10/zr7147/orcestra_env/bin/python -m ipykernel install --user --name orcestra_env --display-name "Python (ORCESTRA)"
 
-# Atctivate conda
+# Activate the conda environment
 conda activate /g/data/k10/zr7147/orcestra_env
 
-# Request compute power
-qsub submit_job.sh
+# Job Submission on NCI
+# ---------------------
+
+# Submit a batch job
+qsub run_orcestra.sh
+
+# Request interactive compute node
 qsub -I -P k10 -q normal -l ncpus=8,mem=32GB,jobfs=10GB,walltime=04:00:00,storage=gdata/k10
+
+# Git Commands
+# ------------
+
+# Check repository status
+git status
+
+# Add files to staging
+git add <file>
+git add .  # Add all changes
+
+# Commit changes
+git commit -m "Your commit message"
+
+# Pull latest changes from remote
+git pull --no-rebase  # Use merge strategy for divergent branches
+
+# Push commits to remote
+git push
+
+# View commit history
+git log --oneline
+
+# Clone the repository (if starting fresh)
+git clone https://github.com/zulkiflirmdn/Orcestra-vertical-profile.git
+
+# Running the Project
+# -------------------
+
+# Run the analysis script via PBS job (see run_orcestra.sh)
+# Or run directly in environment:
+python my_analysis_script.py
+
+# Use Jupyter notebooks for data exploration and categorization
+# Open notebooks like categorization.ipynb, satellite.ipynb, etc.
+
+# Important Notes
+# ---------------
+
+# - Ensure conda environment is activated before running Python scripts or notebooks
+# - Use qsub for compute-intensive tasks on NCI
+# - Commit and push changes regularly to GitHub
+# - For divergent branches, use git pull --no-rebase to merge
