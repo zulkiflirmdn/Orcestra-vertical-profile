@@ -139,6 +139,9 @@ Thumbs.db
 # Ignore the entire Orcestra-vertical-profile directory
 /Orcestra-vertical-profile/
 
+# Ignore the run_orcestra.sh script
+.run_orcestra.sh
+
 # Ignore all NetCDF and Zarr data
 *.nc
 *.zarr/
