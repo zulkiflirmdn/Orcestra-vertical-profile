@@ -22,6 +22,24 @@ qsub run_orcestra.sh
 # Request interactive compute node
 qsub -I -P k10 -q normal -l ncpus=8,mem=32GB,jobfs=10GB,walltime=04:00:00,storage=gdata/k10
 
+# Check Compute & Storage Resources on Gadi
+# -------------------------------------------
+
+# Account & CPU allocation
+nci_account -v
+
+# Storage quota
+lquota
+
+# Job queue status
+qstat -u $USER
+
+# Recent job history & usage
+nvlog
+
+# Project details
+nci_account
+
 # Git Commands
 # ------------
 
