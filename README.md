@@ -82,8 +82,10 @@ For large-scale processing, use the PBS job script:
 qsub run_orcestra.sh
 ```
 
-The script (`run_orcestra.sh`) is configured for:
-- 8 CPUs
+The script (`run_orcestra.sh`) is configured to run `satellite_preprocessing.py` by default. You can override the target script with `qsub -F 'your_script.py' run_orcestra.sh`.
+
+It is configured for:
+- 16 CPUs
 - 32GB memory
 - 5-hour walltime
 - Access to k10 project storage

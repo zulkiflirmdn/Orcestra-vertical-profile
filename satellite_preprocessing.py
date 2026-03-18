@@ -13,6 +13,7 @@ Requirements:
 """
 
 import glob
+import os
 import xarray as xr
 import os
 from dask.distributed import Client
@@ -47,6 +48,15 @@ def clean_imerg(ds):
     return ds
 
 
+def get_dask_config():
+    """Build a Dask worker configuration that tracks the PBS allocation."""
+
+    worker_count = int(os.environ.get("ORCESTRA_DASK_WORKERS", os.environ.get("PBS_NCPUS", "4")))
+    memory_limit = os.environ.get("ORCESTRA_DASK_MEMORY_LIMIT", "1800MiB")
+
+    return max(1, worker_count), memory_limit
+
+
 def main():
     print("Starting ORCESTRA satellite data processing...")
 
@@ -63,55 +73,66 @@ def main():
 
     # Initialize Dask client for parallel processing
     print("Setting up Dask client for parallel processing...")
-    # Use 16 workers as specified in PBS script (32GB / 16 = 2GB per worker)
-    client = Client(n_workers=16, threads_per_worker=1, memory_limit='2GB')
-    print(f"Dask is ready! Dashboard: {client.dashboard_link}")
+    worker_count, memory_limit = get_dask_config()
+    print(f"Dask workers: {worker_count}")
+    print(f"Dask memory limit per worker: {memory_limit}")
 
-    # Open with Parallel Dask Processing
-    print("Loading and processing data...")
+    client = Client(n_workers=worker_count, threads_per_worker=1, memory_limit=memory_limit)
+    ds_gpm = None
 
-    # Collect files in a deterministic order and apply a preprocessing step
-    # so all tiles share the same coordinate grid before merging.
-    input_files = sorted(glob.glob(os.path.join(output_dir, "*.HDF5")))
+    try:
+        print(f"Dask is ready! Dashboard: {client.dashboard_link}")
 
-    ds_gpm = xr.open_mfdataset(
-        input_files,
-        concat_dim='time',
-        combine='nested',
-        engine='h5netcdf',
-        group='/Grid',
-        preprocess=clean_imerg,
-        chunks={'time': 1, 'lat': 400, 'lon': 400},  # Chunk for memory efficiency
-        parallel=True
-    )
+        # Open with Parallel Dask Processing
+        print("Loading and processing data...")
 
-    # Sort by time (safe guard in case filenames don't sort perfectly)
-    ds_gpm = ds_gpm.sortby('time')
+        # Collect files in a deterministic order and apply a preprocessing step
+        # so all tiles share the same coordinate grid before merging.
+        input_files = sorted(glob.glob(os.path.join(input_dir, "*.HDF5")))
+        if not input_files:
+            raise FileNotFoundError(f"No IMERG HDF5 files found in {input_dir}")
 
-    # Drop bounds variables that can trigger encoding issues for chunked arrays
-    # (e.g., time_bnds uses object dtype in some IMERG files).
-    ds_gpm = ds_gpm.drop_vars(['time_bnds', 'lat_bnds', 'lon_bnds'], errors='ignore')
+        print(f"Found {len(input_files)} IMERG files")
 
-    # Save with Compression (saves disk space on Gadi!)
-    encoding = {var: {'zlib': True, 'complevel': 4} for var in ds_gpm.data_vars}
+        ds_gpm = xr.open_mfdataset(
+            input_files,
+            concat_dim='time',
+            combine='nested',
+            engine='h5netcdf',
+            group='/Grid',
+            preprocess=clean_imerg,
+            chunks={'time': 1, 'lat': 400, 'lon': 400},  # Chunk for memory efficiency
+            parallel=True
+        )
 
-    # Physical Write to Disk
-    print(f"Starting the combined write to: {output_path}...")
-    print("This will process files one-by-one to keep RAM usage low.")
+        # Sort by time (safe guard in case filenames don't sort perfectly)
+        ds_gpm = ds_gpm.sortby('time')
 
-    ds_gpm.to_netcdf(
-        output_path,
-        mode='w',
-        format='NETCDF4',
-        encoding=encoding,
-        compute=True
-    )
+        # Drop bounds variables that can trigger encoding issues for chunked arrays
+        # (e.g., time_bnds uses object dtype in some IMERG files).
+        ds_gpm = ds_gpm.drop_vars(['time_bnds', 'lat_bnds', 'lon_bnds'], errors='ignore')
 
-    print("Success! Single cropped file created.")
-    print(f"Output file: {output_path}")
+        # Save with Compression (saves disk space on Gadi!)
+        encoding = {var: {'zlib': True, 'complevel': 4} for var in ds_gpm.data_vars}
 
-    # Clean up
-    client.close()
+        # Physical Write to Disk
+        print(f"Starting the combined write to: {output_path}...")
+        print("This will process files one-by-one to keep RAM usage low.")
+
+        ds_gpm.to_netcdf(
+            output_path,
+            mode='w',
+            format='NETCDF4',
+            encoding=encoding,
+            compute=True
+        )
+
+        print("Success! Single cropped file created.")
+        print(f"Output file: {output_path}")
+    finally:
+        if ds_gpm is not None:
+            ds_gpm.close()
+        client.close()
 
 if __name__ == "__main__":
     main()
