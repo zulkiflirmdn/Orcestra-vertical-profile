@@ -136,9 +136,6 @@ Thumbs.db
 # Logs
 *.log
 
-# Ignore the entire Orcestra-vertical-profile directory
-/Orcestra-vertical-profile/
-
 # Ignore the run_orcestra.sh script
 .run_orcestra.sh
 
@@ -151,8 +148,16 @@ Thumbs.db
 output.png
 overall.png
 /Plot-Figs
+outputs/
+
+# Structured data folders
+data/raw/
+data/processed/
+
+# Optional: keep copied documentation private if added later
+docs/private/
 
 
 # Private notes (owner-only)
-notes.md
-notes.txt
+notes/notes.md
+notes/notes.txt

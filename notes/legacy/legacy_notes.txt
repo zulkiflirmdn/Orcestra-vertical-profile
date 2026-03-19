@@ -1,0 +1,8 @@
+# Install the engine into your environment
+conda install -p /g/data/k10/zr7147/orcestra_env ipykernel --yes
+
+# Register it so Jupyter can see it
+/g/data/k10/zr7147/orcestra_env/bin/python -m ipykernel install --user --name orcestra_env --display-name "Python (ORCESTRA)"
+
+# Atctivate conda
+conda activate /g/data/k10/zr7147/orcestra_env

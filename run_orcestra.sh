@@ -12,7 +12,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PYTHON_SCRIPT="${1:-satellite_preprocessing.py}"
+PYTHON_SCRIPT="${1:-scripts/satellite_preprocessing.py}"
 ENV_PREFIX="/g/data/k10/zr7147/orcestra_env"
 PYTHON_BIN="$ENV_PREFIX/bin/python"
 

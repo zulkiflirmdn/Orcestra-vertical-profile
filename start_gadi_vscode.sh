@@ -10,7 +10,7 @@
 # Requirements (local laptop):
 #   - SSH key configured for gadi.nci.org.au
 #   - VS Code with Remote - SSH extension (ms-vscode-remote.remote-ssh)
-#   - ~/.ssh/config with 'Host gadi' entry (see notes.md)
+#   - ~/.ssh/config with 'Host gadi' entry (see notes/notes.md)
 #
 # Usage:
 #   bash start_gadi_vscode.sh [ncpus] [mem] [walltime] [project]

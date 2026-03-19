@@ -13,21 +13,52 @@ This repository contains analysis scripts and Jupyter notebooks for processing a
 
 ## Project Structure
 
+### Repository Code (stored at `/home/565/zr7147/Proj/`)
 ```
-├── categorization.ipynb              # Main data categorization notebook
-├── new_categorisation-omega.ipynb    # Advanced categorization with omega analysis
-├── satellite.ipynb                   # Satellite data processing
-├── note1.ipynb                       # Additional analysis notes
-├── run_orcestra.sh                   # PBS job submission script
-├── notes.txt                         # Important commands and setup instructions
-├── README.md                         # This file
-├── Orcestra-vertical-profile/        # Subfolder with additional notebooks
-│   ├── categorization.ipynb
-│   ├── note1.ipynb
-│   └── notes.txt
-└── Plot-Figs/                        # Output figures and plots
-    └── Evolutionary_Grid_Stratiform_Top-Heavy.png
+├── notebooks/                               # Main Jupyter notebooks
+│   ├── categorization.ipynb                # Dropsonde categorization
+│   ├── satellite.ipynb                     # IMERG satellite processing
+│   ├── new_categorisation-omega.ipynb      # Vertical motion analysis
+│   ├── note1.ipynb                         # Analysis notes
+│   └── legacy/                             # Preserved older notebook copies
+├── notes/                                  # Project notes and task specs
+│   ├── SPEC_sonde_vs_satellite.md         # Requirements specification
+│   ├── notes.md                           # Setup & workflow documentation
+│   └── legacy/                            # Archived documentation
+├── scripts/                                # Python processing scripts
+│   ├── config.py                          # Configuration & paths
+│   ├── satellite_preprocessing.py         # IMERG download & preprocessing
+│   └── earthcare_preprocessing.py         # EarthCARE download & preprocessing (NEW)
+├── outputs/                                # Generated outputs
+│   ├── figures/
+│   │   ├── plots/                        # Main figure outputs (formerly Plot-Figs/)
+│   │   │   └── omega_satellite_pairs/    # Dropsonde-IMERG comparison figures
+│   │   ├── dropsonde_satellite_comparison/  # 3-panel comparison figures (NEW)
+│   │   └── legacy/                       # Archived figure outputs
+│   └── logs/                             # Batch job logs
+├── data/                                   # Local data staging (optional)
+│   ├── raw/
+│   └── processed/
+├── GPortalUserManual_en.pdf                # EarthCARE reference documentation
+├── satellite_preprocessing.py              # Backward-compatible wrapper
+├── run_orcestra.sh                         # PBS job submission script
+└── README.md                               # This file
 ```
+
+### External Data Storage (stored at `/g/data/k10/zr7147/`)
+```
+/g/data/k10/zr7147/
+├── GPM_IMERG_Data/                        # Raw IMERG HDF5 downloads
+├── ORCESTRA_IMERG_Combined_Cropped.nc     # Processed IMERG (0N-30N, 70W-0W)
+├── EarthCARE_Data/                        # Raw EarthCARE downloads (NEW)
+├── ORCESTRA_EarthCARE_Combined_Cropped.nc # Processed EarthCARE (NEW)
+├── ORCESTRA_dropsondes_categorized.zarr   # Processed dropsonde data
+├── ORCESTRA_dropsondes_categories.csv     # Dropsonde category metadata
+├── orcestra_env/                          # Conda environment
+└── miniconda3/                            # Base conda installation
+```
+
+**Important**: All large data files are stored on `/g/data/k10/zr7147/` to comply with NCI storage policies. The repository contains only code, notebooks, lightweight metadata, and documentation.
 
 ## Setup and Installation
 
@@ -70,9 +101,9 @@ This repository contains analysis scripts and Jupyter notebooks for processing a
    ```
 
 3. Open and run the analysis notebooks:
-   - `categorization.ipynb`: Core data categorization logic
-   - `satellite.ipynb`: Satellite data ingestion and processing
-   - `new_categorisation-omega.ipynb`: Advanced categorization with vertical motion analysis
+   - `notebooks/categorization.ipynb`: Core data categorization logic
+   - `notebooks/satellite.ipynb`: Satellite data ingestion and processing
+   - `notebooks/new_categorisation-omega.ipynb`: Advanced categorization with vertical motion analysis
 
 ### Batch Processing
 
@@ -82,7 +113,7 @@ For large-scale processing, use the PBS job script:
 qsub run_orcestra.sh
 ```
 
-The script (`run_orcestra.sh`) is configured to run `satellite_preprocessing.py` by default. You can override the target script with `qsub -F 'your_script.py' run_orcestra.sh`.
+The script (`run_orcestra.sh`) is configured to run `scripts/satellite_preprocessing.py` by default. You can override the target script with `qsub -F 'your_script.py' run_orcestra.sh`.
 
 It is configured for:
 - 16 CPUs
@@ -95,7 +126,10 @@ It is configured for:
 - **Stratiform Classification**: Identification of stratiform cloud structures
 - **Top-Heavy Analysis**: Characterization of precipitation profiles
 - **Evolutionary Grids**: Time-series analysis of cloud evolution
-- **Omega Profiles**: Vertical motion analysis from model data
+- **Omega Profiles**: Vertical motion analysis from dropsonde data
+- **IMERG Preprocessing**: GPM/IMERG satellite precipitation (domain: 0N-30N, 70W-0W)
+- **EarthCARE Processing**: CloudSat/EarthCARE satellite precipitation (domain: 0N-30N, 70W-0W)
+- **Dropsonde-Satellite Comparison**: Three-panel figures matching dropsonde profiles with satellite precipitation
 
 ## Git Workflow
 
@@ -135,9 +169,17 @@ The conda environment includes packages for:
 
 ## Output and Results
 
-Analysis results are stored in:
-- `Plot-Figs/`: Generated figures and plots
-- Notebook outputs: Inline visualizations and data summaries
+Analysis results are stored in organized directories:
+
+- **Main Figures**: `outputs/figures/plots/` - All generated plots including omega-satellite pairs
+- **Dropsonde-Satellite Comparison**: `outputs/figures/dropsonde_satellite_comparison/` - Three-panel comparison figures
+- **Legacy Figures**: `outputs/figures/legacy/` - Archived output products
+- **Job Logs**: `outputs/logs/` - Batch job execution logs
+
+All large data files (NetCDF, HDF5) are retained on `/g/data/k10/zr7147/`:
+- processed IMERG products
+- processed EarthCARE products (after download)
+- raw satellite data downloads
 
 ## Contributing
 
@@ -149,7 +191,7 @@ Analysis results are stored in:
 
 ## Contact
 
-For questions or issues related to this project, please refer to the `notes.txt` file or contact the repository maintainer.
+For questions or issues related to this project, please refer to the `notes/notes.txt` file or contact the repository maintainer.
 
 ## License
 
