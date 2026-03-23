@@ -88,18 +88,62 @@ def default_earthcare_output_path() -> Path:
 
 
 def earthcare_credentials() -> dict:
-    """Return G-Portal credentials and configuration.
+    """Return ESA Earth Online credentials for earthcare-downloader.
 
-    IMPORTANT: Edit these values with your G-Portal account credentials.
-    Username and password should be stored securely.
+    IMPORTANT: Set these environment variables with your ESA account credentials.
+    - ESA_EO_USERNAME: Your ESA Earth Online username
+    - ESA_EO_PASSWORD: Your ESA Earth Online password
+
+    Example:
+        export ESA_EO_USERNAME="your_username"
+        export ESA_EO_PASSWORD="your_password"
     """
 
     return {
-        "username": os.environ.get("EARTHCARE_USERNAME", "YOUR_GPORTAL_USERNAME"),
-        "password": os.environ.get("EARTHCARE_PASSWORD", "YOUR_GPORTAL_PASSWORD"),
-        # G-Portal API endpoint (may vary by region/version)
-        "gportal_url": os.environ.get(
-            "EARTHCARE_GPORTAL_URL",
-            "https://gportal.jaxa.jp/gw/",
-        ),
+        "username": os.environ.get("ESA_EO_USERNAME"),
+        "password": os.environ.get("ESA_EO_PASSWORD"),
     }
+
+
+# ════════════════════════════════════════════════════════════════════════════════════
+# ORCESTRA Campaign EarthCARE Download Configuration
+# ════════════════════════════════════════════════════════════════════════════════════
+
+@dataclass(frozen=True)
+class OrcuestraEarthcareConfig:
+    """ORCESTRA-specific EarthCARE download parameters."""
+
+    # Geographic Domain
+    lat_min: float = 0  # 0°N
+    lat_max: float = 30  # 30°N
+    lon_min: float = -70  # 70°W
+    lon_max: float = 0  # 0°W
+
+    # Time Period
+    start_date: str = "2024-08-10"  # YYYY-MM-DD
+    end_date: str = "2024-09-30"  # YYYY-MM-DD
+
+    # Products to Download
+    products: tuple = ("CPR_CLP_2A", "CPR_ECO_2A", "AC__CLP_2B")
+
+    # Download Settings
+    max_workers: int = 5  # Concurrent downloads
+    force_redownload: bool = False  # Skip existing files
+    unzip_files: bool = True  # Auto-unzip archives
+    organize_by_product: bool = True  # Create product subdirectories
+
+
+def orcestra_earthcare_config() -> OrcuestraEarthcareConfig:
+    """Get ORCESTRA EarthCARE download configuration with env-var overrides."""
+
+    return OrcuestraEarthcareConfig(
+        lat_min=float(os.environ.get("ORCESTRA_EARTHCARE_LAT_MIN", "0")),
+        lat_max=float(os.environ.get("ORCESTRA_EARTHCARE_LAT_MAX", "30")),
+        lon_min=float(os.environ.get("ORCESTRA_EARTHCARE_LON_MIN", "-70")),
+        lon_max=float(os.environ.get("ORCESTRA_EARTHCARE_LON_MAX", "0")),
+        start_date=os.environ.get("ORCESTRA_EARTHCARE_START", "2024-08-10"),
+        end_date=os.environ.get("ORCESTRA_EARTHCARE_END", "2024-09-30"),
+        max_workers=int(os.environ.get("ORCESTRA_EARTHCARE_WORKERS", "5")),
+        force_redownload=os.environ.get("ORCESTRA_EARTHCARE_FORCE", "false").lower() == "true",
+        unzip_files=os.environ.get("ORCESTRA_EARTHCARE_UNZIP", "true").lower() == "true",
+    )

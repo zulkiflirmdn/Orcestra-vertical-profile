@@ -1,25 +1,29 @@
 #!/usr/bin/env python3
-"""Process EarthCARE CloudSat precipitation data into a cropped NetCDF product.
+"""Download and process EarthCARE CPR data for ORCESTRA campaign.
 
-This module downloads and preprocesses EarthCARE precipitation data from the G-Portal
-(JAXA's Earth Observation Research Center data portal) into a standardized NetCDF format
-that matches IMERG for direct comparison with dropsonde observations.
+This module automates EarthCARE data download using the earthcare-downloader package
+and processes the data into a standardized NetCDF format matching IMERG for direct
+comparison with dropsonde observations.
 
 Prerequisites:
-    1. G-Portal account with EarthCARE data access
-    2. Configure credentials below (earthcare_credentials dictionary)
-    3. Download EarthCARE data files to /g/data/k10/zr7147/EarthCARE_Data/
+    1. ESA Earth Online account with EarthCARE data access
+    2. Set ESA_EO_USERNAME and ESA_EO_PASSWORD environment variables
+    3. Install earthcare-downloader: pip install earthcare-downloader
+
+Primary Products:
+    - CPR_CLP_2A: Cloud Properties (reflectivity, vertical velocity)
+    - CPR_ECO_2A: Echo Properties (reflectivity profiles)
 
 Reference:
-    - See GPortalUserManual_en.pdf for G-Portal documentation
-    - EarthCARE data products: https://www.eorc.jaxa.jp/en/earthcare/
-
+    - earthcare-downloader: https://pypi.org/project/earthcare-downloader/
+    - EarthCARE data products: https://www.esa.int/Applications/Observing_the_Earth/EarthCARE
 """
 
 from __future__ import annotations
 
 import argparse
 import glob
+import logging
 import os
 import warnings
 from pathlib import Path
@@ -27,36 +31,35 @@ from pathlib import Path
 import xarray as xr
 from dask.distributed import Client
 
-from scripts.config import BoundingBox, default_earthcare_bbox, default_earthcare_input_dir, default_earthcare_output_path
+from scripts.config import BoundingBox, default_earthcare_bbox, default_earthcare_input_dir, default_earthcare_output_path, earthcare_credentials
 
-# ════════════════════════════════════════════════════════════════════════════════════
-# EDITABLE CREDENTIALS SECTION
-# ════════════════════════════════════════════════════════════════════════════════════
-# Update these credentials with your G-Portal account information
-# These can also be set via environment variables (see code below)
-#
-EARTHCARE_CREDENTIALS = {
-    "username": os.environ.get("EARTHCARE_USERNAME", "YOUR_GPORTAL_USERNAME_HERE"),
-    "password": os.environ.get("EARTHCARE_PASSWORD", "YOUR_GPORTAL_PASSWORD_HERE"),
-    # G-Portal base URL (may change with updates)
-    "gportal_url": os.environ.get(
-        "EARTHCARE_GPORTAL_URL",
-        "https://gportal.jaxa.jp/gw/",
-    ),
-}
-
-# Optional: CloudSat/EarthCARE product IDs or dataset names to download
-# Modify based on actual product availability in G-Portal
-EARTHCARE_PRODUCT_ID = os.environ.get(
-    "EARTHCARE_PRODUCT_ID",
-    "EarthCARE_CPR_geophysical_variables",  # Example: CloudSat Radar Reflectivity
+# Setup logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
 )
+logger = logging.getLogger(__name__)
+
 # ════════════════════════════════════════════════════════════════════════════════════
+# ORCESTRA Campaign Configuration for earthcare-downloader
+# ════════════════════════════════════════════════════════════════════════════════════
+
+ORCESTRA_CONFIG = {
+    'latitude_range': [0, 30],           # Wider buffer (0N-30N per SPEC)
+    'longitude_range': [-70, 0],         # Wider buffer (70W-0W per SPEC)
+    'start_date': '2024-08-10',
+    'end_date': '2024-09-30',
+    'products': [
+        'CPR_CLP_2A',    # PRIMARY: Cloud Properties (vertical velocity, reflectivity)
+        'CPR_ECO_2A',    # PRIMARY: Echo Properties (reflectivity profiles)
+        'AC__CLP_2B',    # SECONDARY: Synergistic Cloud Properties
+    ]
+}
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Download and merge EarthCARE CloudSat precipitation data"
+        description="Download and merge EarthCARE CPR data for ORCESTRA"
     )
     parser.add_argument("--input-dir", type=Path, default=default_earthcare_input_dir())
     parser.add_argument("--output-path", type=Path, default=default_earthcare_output_path())
@@ -64,90 +67,98 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--lat-max", type=float, default=default_earthcare_bbox().lat_max)
     parser.add_argument("--lon-min", type=float, default=default_earthcare_bbox().lon_min)
     parser.add_argument("--lon-max", type=float, default=default_earthcare_bbox().lon_max)
+    parser.add_argument("--skip-download", action="store_true",
+                        help="Skip download step and use existing files in input-dir")
     return parser.parse_args()
 
 
 def get_dask_config() -> tuple[int, str]:
     """Build worker settings from PBS/Dask env vars."""
-
     worker_count = int(os.environ.get("ORCESTRA_DASK_WORKERS", os.environ.get("PBS_NCPUS", "4")))
     memory_limit = os.environ.get("ORCESTRA_DASK_MEMORY_LIMIT", "1800MiB")
     return max(1, worker_count), memory_limit
 
 
-def download_earthcare_data(bbox: BoundingBox, credentials: dict) -> list[Path]:
-    """Download EarthCARE data from G-Portal.
-
-    Warning: This is a template function. Actual implementation requires:
-    1. G-Portal API authentication (OAuth or username/password)
-    2. Query construction with bbox and time parameters
-    3. File download handling with progress tracking
+def download_earthcare_data(output_dir: Path, credentials: dict) -> list[Path]:
+    """Download EarthCARE CPR products using earthcare-downloader.
 
     Args:
-        bbox: Spatial bounding box (lat/lon)
-        credentials: Dictionary with 'username', 'password', 'gportal_url'
+        output_dir: Directory to save downloaded files
+        credentials: Dict with 'username' and 'password' keys
 
     Returns:
         List of downloaded file paths
 
     Raises:
         ValueError: If credentials are not properly configured
-        ConnectionError: If G-Portal connection fails
+        ImportError: If earthcare-downloader is not installed
     """
 
-    if credentials["username"] == "YOUR_GPORTAL_USERNAME_HERE":
+    # Check credentials
+    if not credentials.get('username') or not credentials.get('password'):
         raise ValueError(
-            "EARTHCARE_USERNAME not configured. "
-            "Edit EARTHCARE_CREDENTIALS in scripts/earthcare_preprocessing.py "
-            "or set EARTHCARE_USERNAME environment variable."
+            "ESA Earth Online credentials not configured. "
+            "Set ESA_EO_USERNAME and ESA_EO_PASSWORD environment variables.\n"
+            "Example:\n"
+            "  export ESA_EO_USERNAME='your_username'\n"
+            "  export ESA_EO_PASSWORD='your_password'"
         )
 
-    print("EarthCARE G-Portal Download")
-    print("=" * 80)
-    print(f"User: {credentials['username']}")
-    print(f"G-Portal URL: {credentials['gportal_url']}")
-    print(f"Domain: lat [{bbox.lat_min}, {bbox.lat_max}], lon [{bbox.lon_min}, {bbox.lon_max}]")
-    print()
+    # Import earthcare_downloader
+    try:
+        from earthcare_downloader import search, download
+    except ImportError:
+        raise ImportError(
+            "earthcare-downloader not installed. "
+            "Install it with: pip install earthcare-downloader"
+        )
 
-    # TODO: Implement actual G-Portal API calls
-    # Reference: GPortalUserManual_en.pdf section on API authentication and data queries
-    #
-    # Example pseudocode:
-    # ───────────────────────────────────────────────────────────────────────
-    # 1. Authenticate to G-Portal:
-    #    - Use OAuth2 or basic auth with provided credentials
-    #    - Store session token for subsequent requests
-    #
-    # 2. Query available EarthCARE products in time/space range:
-    #    - POST to /api/v1/query with bbox + time range
-    #    - Filter by product type (e.g., CloudSat precipitation)
-    #
-    # 3. Download each product:
-    #    - GET file URLs from query response
-    #    - Download with progress tracking
-    #    - Verify checksum (if provided)
-    #    - Save to /g/data/k10/zr7147/EarthCARE_Data/
-    #
-    # 4. Return list of downloaded file paths
-    # ───────────────────────────────────────────────────────────────────────
+    output_dir.mkdir(parents=True, exist_ok=True)
+    logger.info(f"Download directory: {output_dir.absolute()}")
 
-    # Placeholder: List downloaded files (if they exist)
-    input_dir = Path(credentials.get("input_dir", "/g/data/k10/zr7147/EarthCARE_Data"))
-    input_dir.mkdir(parents=True, exist_ok=True)
+    all_files = []
 
-    downloaded_files = sorted(glob.glob(str(input_dir / "*.nc")))
-    if not downloaded_files:
-        print(f"No EarthCARE NetCDF files found in {input_dir}")
-        print("Please download EarthCARE data from G-Portal first:")
-        print(f"  1. Go to {credentials['gportal_url']}")
-        print("  2. Login with your G-Portal account")
-        print("  3. Search for EarthCARE CloudSat precipitation products")
-        print(f"  4. Download files with spatial extent: lat [{bbox.lat_min}, {bbox.lat_max}], lon [{bbox.lon_min}, {bbox.lon_max}]")
-        print(f"  5. Place files in {input_dir}/")
-        raise FileNotFoundError(f"No EarthCARE data files found in {input_dir}")
+    # Download each product type
+    for product in ORCESTRA_CONFIG['products']:
+        logger.info(f"\n{'='*60}")
+        logger.info(f"Searching for product: {product}")
+        logger.info(f"{'='*60}")
 
-    print(f"Found {len(downloaded_files)} EarthCARE NetCDF files to process")
-    return [Path(f) for f in downloaded_files]
+        try:
+            # Search for files
+            logger.info(f"Searching {product} from {ORCESTRA_CONFIG['start_date']} to {ORCESTRA_CONFIG['end_date']}")
+            files = search(
+                product=product,
+                start=ORCESTRA_CONFIG['start_date'],
+                stop=ORCESTRA_CONFIG['end_date'],
+                lat_range=ORCESTRA_CONFIG['latitude_range'],
+                lon_range=ORCESTRA_CONFIG['longitude_range'],
+            )
+
+            logger.info(f"Found {len(files)} files for {product}")
+
+            # Download files if available
+            if files:
+                logger.info(f"Starting download for {product}...")
+                product_dir = output_dir / product
+                product_dir.mkdir(parents=True, exist_ok=True)
+
+                paths = download(
+                    files,
+                    output_path=str(product_dir),
+                    max_workers=5,  # Concurrent downloads
+                    force=False      # Skip existing files
+                )
+                logger.info(f"Downloaded {len(paths)} files to {product_dir}")
+                all_files.extend(paths)
+            else:
+                logger.warning(f"No files found for {product}")
+
+        except Exception as e:
+            logger.error(f"Error downloading {product}: {str(e)}")
+            continue
+
+    return all_files
 
 
 def clean_earthcare(ds: xr.Dataset, bbox: BoundingBox) -> xr.Dataset:
@@ -190,50 +201,60 @@ def clean_earthcare(ds: xr.Dataset, bbox: BoundingBox) -> xr.Dataset:
 
 
 def main() -> None:
+    """Main workflow: download and process EarthCARE data."""
+
     args = parse_args()
     bbox = BoundingBox(args.lat_min, args.lat_max, args.lon_min, args.lon_max)
-
     input_dir = args.input_dir
     output_path = args.output_path
 
-    print("Starting EarthCARE satellite preprocessing...")
-    print(f"Input EarthCARE directory: {input_dir}")
-    print(f"Output NetCDF path: {output_path}")
-    print(
-        "Crop bbox: "
-        f"lat[{bbox.lat_min}, {bbox.lat_max}] "
-        f"lon[{bbox.lon_min}, {bbox.lon_max}]"
+    logger.info("Starting EarthCARE satellite preprocessing...")
+    logger.info(f"Input EarthCARE directory: {input_dir}")
+    logger.info(f"Output NetCDF path: {output_path}")
+    logger.info(
+        f"Crop bbox: lat[{bbox.lat_min}, {bbox.lat_max}] lon[{bbox.lon_min}, {bbox.lon_max}]"
     )
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    worker_count, memory_limit = get_dask_config()
-    print(f"Dask workers: {worker_count}")
-    print(f"Dask memory per worker: {memory_limit}")
+    # Step 1: Download EarthCARE data (if not skipping)
+    input_files = []
+    if not args.skip_download:
+        try:
+            creds = earthcare_credentials()
+            input_files = download_earthcare_data(input_dir, creds)
+        except (ValueError, ImportError) as e:
+            logger.error(f"Download error: {e}")
+            return
+        except Exception as e:
+            logger.error(f"Failed to download EarthCARE data: {e}")
+            logger.info("Trying to use existing files in input directory...")
 
-    # Step 1: Download EarthCARE data from G-Portal (if needed)
-    try:
-        input_files = download_earthcare_data(bbox, EARTHCARE_CREDENTIALS)
-    except FileNotFoundError as e:
-        print(f"Error: {e}")
-        return
-    except ValueError as e:
-        print(f"Configuration Error: {e}")
-        return
+    # Step 2: Find available EarthCARE NetCDF files
+    if not input_files:
+        input_files = sorted(glob.glob(str(input_dir / "**" / "*.nc"), recursive=True))
 
     if not input_files:
-        raise FileNotFoundError(f"No EarthCARE files found in {input_dir}")
+        logger.error(f"No EarthCARE NetCDF files found in {input_dir}")
+        logger.info("Please ensure EarthCARE data is downloaded and available in:")
+        logger.info(f"  {input_dir}")
+        return
 
-    print(f"Found {len(input_files)} EarthCARE files")
+    logger.info(f"Found {len(input_files)} EarthCARE files to process")
 
-    # Step 2: Merge and crop EarthCARE files
+    # Step 3: Merge and crop EarthCARE files
+    worker_count, memory_limit = get_dask_config()
+    logger.info(f"Dask workers: {worker_count}")
+    logger.info(f"Dask memory per worker: {memory_limit}")
+
     client = Client(n_workers=worker_count, threads_per_worker=1, memory_limit=memory_limit)
     ds_earthcare: xr.Dataset | None = None
 
     try:
-        print(f"Dask dashboard: {client.dashboard_link}")
+        logger.info(f"Dask dashboard: {client.dashboard_link}")
 
         # Open all EarthCARE files and merge
+        logger.info("Opening and merging EarthCARE files...")
         ds_earthcare = xr.open_mfdataset(
             [str(f) for f in input_files],
             concat_dim="time",
@@ -255,14 +276,14 @@ def main() -> None:
 
         # Ensure precipitation variable exists and is appropriately named
         if "precipitation" not in ds_earthcare.data_vars:
-            # Check for alternative names (CloudSat uses different variable names)
-            alt_names = ["precip", "precipitation_rate", "rain_rate", "CPR_reflectivity"]
+            # Check for alternative names (EarthCARE uses different variable names)
+            alt_names = ["precip", "precipitation_rate", "rain_rate", "CPR_reflectivity", "reflectivity"]
             found = False
             for alt in alt_names:
                 if alt in ds_earthcare.data_vars:
                     ds_earthcare = ds_earthcare.rename({alt: "precipitation"})
                     found = True
-                    print(f"Renamed variable '{alt}' to 'precipitation'")
+                    logger.info(f"Renamed variable '{alt}' to 'precipitation'")
                     break
             if not found:
                 warnings.warn(
@@ -272,12 +293,12 @@ def main() -> None:
 
         # Encode and write
         encoding = {var: {"zlib": True, "complevel": 4} for var in ds_earthcare.data_vars}
-        print("Writing merged NetCDF...")
+        logger.info("Writing merged NetCDF...")
         ds_earthcare.to_netcdf(
             output_path, mode="w", format="NETCDF4", encoding=encoding, compute=True
         )
 
-        print("Success: merged and cropped EarthCARE written.")
+        logger.info(f"Success! Merged and cropped EarthCARE written to {output_path}")
 
     finally:
         if ds_earthcare is not None:

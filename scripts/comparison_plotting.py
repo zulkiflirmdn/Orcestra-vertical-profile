@@ -247,10 +247,23 @@ class DropsondeSatelliteComparison:
 
             # Get satellite data at matched times
             imerg_slice = self.ds_imerg["precipitation"].isel(time=imerg_nearest_idx)
+
+            # Ensure lat bounds are in correct order
+            if lat_min > lat_max:
+                lat_min, lat_max = lat_max, lat_min
+            if lon_min > lon_max:
+                lon_min, lon_max = lon_max, lon_min
+
             imerg_local = imerg_slice.sel(
                 lon=slice(lon_min, lon_max),
                 lat=slice(lat_min, lat_max),
             )
+
+            # Check if cropped data is valid
+            if imerg_local.size == 0:
+                print(f"  ✗ Circle {circle_idx}: Cropped satellite data is empty")
+                plt.close(fig) if 'fig' in locals() else None
+                return None
 
             if self.ds_earthcare is not None and earthcare_nearest_idx is not None:
                 earthcare_slice = self.ds_earthcare["precipitation"].isel(time=earthcare_nearest_idx)

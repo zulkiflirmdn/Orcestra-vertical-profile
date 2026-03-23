@@ -1,0 +1,4 @@
+product,file_count,size_gb,status,timestamp
+CPR_CLP_2A,0,0.00,SUCCESS,2026-03-20T01:11:49.402651
+CPR_ECO_2A,0,0.00,"ERROR: 403, message='403', url='https://ec-pdgs-dissemination1.eo.esa.int/oads/data/JAXAL2Validated/ECA_JXBA_CPR_ECO_2A_20240909T234828Z_20250508T195040Z_01618H.ZIP'",2026-03-20T01:11:49.402675
+AC__CLP_2B,0,0.00,"ERROR: 403, message='403', url='https://ec-pdgs-dissemination1.eo.esa.int/oads/data/JAXAL2Validated/ECA_JXBB_AC__CLP_2B_20240812T080021Z_20251011T115051Z_01173A.ZIP'",2026-03-20T01:11:49.402685
