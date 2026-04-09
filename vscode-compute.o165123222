@@ -1,0 +1,12 @@
+
+======================================================================================
+                  Resource Usage on 2026-04-09 18:18:51:
+   Job Id:             165123222.gadi-pbs
+   Project:            k10
+   Exit Status:        0
+   Service Units:      16.00
+   NCPUs Requested:    4                   CPU Time Used: 00:05:30        
+   Memory Requested:   16.0GB                Memory Used: 2.41GB          
+   Walltime Requested: 02:00:00            Walltime Used: 02:00:00        
+   JobFS Requested:    100.0MB                JobFS Used: 0B              
+======================================================================================
