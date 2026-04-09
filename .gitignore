@@ -155,9 +155,7 @@ data/raw/
 data/processed/
 
 # Optional: keep copied documentation private if added later
-docs/private/
-
-
-# Private notes (owner-only)
-notes/notes.md
-notes/notes.txt
+docs/
+log/
+notes/
+sh_script/
