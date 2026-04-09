@@ -13,7 +13,6 @@ Analysis of dropsonde vertical velocity profiles and their comparison with satel
 notebooks/    — Jupyter notebooks for exploration and analysis
 scripts/      — Python scripts for downloading and processing data
 outputs/      — Generated figures
-data/         — Local data staging (lightweight only)
 ```
 
 Large data files (NetCDF, HDF5, Zarr) are stored on gadi `/g/data/k10/zr7147/`, not in this repository.
