@@ -139,22 +139,51 @@ Thumbs.db
 # Ignore the run_orcestra.sh script
 .run_orcestra.sh
 
-# Ignore all NetCDF and Zarr data
+# Large scientific data — NEVER commit (lives in /g/data/k10/zr7147/)
 *.nc
 *.zarr/
 *.grib
+*.hdf5
+*.h5
+*.HDF5
+*.he5
 
-# Output images (if generated)
+# Compressed archives (data downloads)
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+
+# Output images and generated figures
 output.png
 overall.png
 outputs/
+Plot-Figs/
+*.gif
 
 # Structured data folders
 data/raw/
 data/processed/
 
-# Optional: keep copied documentation private if added later
-docs/
+# Logs and session files
 log/
-notes/
 sh_script/
+
+# Project docs kept private
+docs/
+
+# Notes directory (local research notes, not for sharing)
+notes/
+
+# EarthCARE — dropped from project, ignore any remnants
+*earthcare*
+*EarthCARE*
+*gportal*
+
+# Claude Code — AI config, skills, memory, rules (local only, never push)
+.claude/
+CLAUDE.md
+**/CLAUDE.md
+ytnotes.md
+methodology_rq2.md
+SESSION_*_FINAL_SUMMARY.md
