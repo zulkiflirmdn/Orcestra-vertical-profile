@@ -17,10 +17,11 @@ from google.genai.errors import ClientError
 GDATA = Path("/g/data/k10/zr7147")
 PROJ  = Path("/home/565/zr7147/Proj")
 
+# Best model first; fallback on quota exhaustion or unavailability.
 MODELS = [
-    "models/gemini-2.5-flash",        # best available, try first
-    "models/gemini-2.0-flash-lite",   # lighter fallback
-    "models/gemini-2.0-flash",        # final fallback
+    "models/gemini-2.5-flash",        # best available
+    "models/gemini-2.0-flash",        # fallback
+    "models/gemini-2.0-flash-lite",   # last resort
 ]
 
 SYSTEM_PROMPT = """You are the Data Agent for an atmospheric science research project (ORCESTRA).
