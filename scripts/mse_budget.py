@@ -497,54 +497,61 @@ def omega_mass_corrected(ds):
     """
     Idea B — Linear mass correction (force ω = 0 at both profile ends).
 
-    BEACH derives omega by integrating div from one boundary with ω = 0 there.
-    The other boundary is unconstrained, so ω_top ≠ 0 in general.
+    BEACH derives omega by integrating div upward from the surface (ω_sfc = 0).
+    The profile ends at ~16 km, short of the tropopause, so ω_top ≠ 0 in general.
 
-    This function applies a linear-in-pressure correction that forces ω → 0
-    at both the lowest AND highest valid altitude:
+    This function applies a linear-in-pressure correction that forces ω → 0 at
+    the top of the integration domain:
 
-        ω_corr(p) = ω(p)  −  ω_top · (p_sfc − p) / (p_sfc − p_top)
+        ω_corr(p) = ω(p) − ω_top · (p_sfc − p) / (p_sfc − p_top)
 
-    At p_top: correction = ω_top  → ω_corr = 0  ✓
-    At p_sfc: correction = 0      → ω_corr = ω_sfc  (preserves surface BC)
+    At p = p_top : correction = ω_top  →  ω_corr = 0  ✓
+    At p = p_sfc : correction = 0      →  ω_corr = ω_sfc (preserves surface BC)
 
     The corresponding divergence adjustment is depth-uniform in pressure:
-        Δdiv = −dω_corr/dp  =  ω_top / (p_sfc − p_top)  = constant
+        Δdiv = ω_top / (p_sfc − p_top)   [s⁻¹, constant throughout column]
 
-    This is the simplest physically consistent mass correction.
+    Critical: the valid mask uses the SAME criteria as _vadv_col and _col_int_p
+    (finite omega AND p AND h_prof), so the correction zeros omega exactly at the
+    top of the range that those functions integrate over.  Using a looser mask
+    (e.g., only omega & p) moves the zero to a higher, unused altitude level and
+    leaves the boundary term unaffected.
 
     Returns:
         omega_corr  (ncircle, nalt) ndarray  [Pa s⁻¹]
         delta_div   (ncircle,)      ndarray  [s⁻¹]  uniform div adjustment per circle
     """
     alt   = ds["altitude"].values
-    p     = ds["p_mean"].values      # (ncircle, nalt)
-    omega = ds["omega"].values       # (ncircle, nalt)
+    T     = ds["ta_mean"].values
+    q     = ds["q_mean"].values
+    p     = ds["p_mean"].values
+    omega = ds["omega"].values
     ncircle = ds.sizes["circle"]
-    nalt    = ds.sizes["altitude"]
+
+    h_prof = _mse(T, alt[np.newaxis, :], q)
 
     omega_corr = omega.copy().astype(float)
     delta_div  = np.full(ncircle, np.nan)
 
     for i in range(ncircle):
-        valid = np.isfinite(omega[i]) & np.isfinite(p[i])
+        # Same valid mask as _vadv_col: all three arrays must be finite.
+        valid = np.isfinite(omega[i]) & np.isfinite(p[i]) & np.isfinite(h_prof[i])
         if valid.sum() < 3:
             continue
         idx_valid = np.where(valid)[0]
         idx_bot   = idx_valid[0]
         idx_top   = idx_valid[-1]
 
-        p_sfc = p[i, idx_bot]
-        p_top = p[i, idx_top]
+        p_sfc  = p[i, idx_bot]
+        p_top  = p[i, idx_top]
         om_top = omega[i, idx_top]
 
-        if abs(p_sfc - p_top) < 1e3:   # degenerate column
+        if abs(p_sfc - p_top) < 1e3:
             continue
 
-        # Linear correction profile (only over valid range)
         correction = om_top * (p_sfc - p[i, idx_valid]) / (p_sfc - p_top)
         omega_corr[i, idx_valid] -= correction
-        delta_div[i] = om_top / (p_sfc - p_top)   # uniform div shift [s⁻¹]
+        delta_div[i] = om_top / (p_sfc - p_top)
 
     return omega_corr, delta_div
 
@@ -662,11 +669,11 @@ def apply_mass_correction(ds):
     and the consistent depth-uniform correction to div required by continuity
     (∂ω/∂p = −div  →  ∂(Δω)/∂p = ω_top/(p_sfc−p_top) = −Δdiv):
 
-        div_corr(p) = div(p) − ω_top / (p_sfc − p_top)   [uniform at all levels]
+        div_corr = −∂(ω_corr)/∂p   (reconstructed from corrected omega)
 
     After correction:
-        ω_corr(p_top) = 0   and   ω_corr(p_sfc) unchanged  ✓
-        div_corr internally consistent with ω_corr          ✓
+        ω_corr tapers smoothly to 0 at the profile top      ✓
+        div_corr exactly consistent with ω_corr             ✓
 
     Applying this to the dataset before running all three methods makes Methods
     1, 2, and 3 mutually consistent — the h_div_residual (boundary term) in
@@ -678,10 +685,13 @@ def apply_mass_correction(ds):
     """
     omega_corr, delta_div = omega_mass_corrected(ds)
 
-    div_orig = ds["div"].values.copy().astype(float)
+    # Subtract the depth-uniform Δdiv implied by the linear-ramp correction.
+    # Adding Δω(p) = −ω_top·(p_sfc−p)/(p_sfc−p_top) to omega requires
+    # subtracting Δdiv = ω_top/(p_sfc−p_top) from div (continuity: ∂ω/∂p = −div).
+    div_corr = ds["div"].values.copy().astype(float)
     for i in range(ds.sizes["circle"]):
         if np.isfinite(delta_div[i]):
-            div_orig[i] -= delta_div[i]     # uniform subtraction at all levels
+            div_corr[i] -= delta_div[i]
 
     ds_corr = ds.assign(
         {
@@ -692,7 +702,7 @@ def apply_mass_correction(ds):
                 attrs=ds["omega"].attrs,
             ),
             "div": xr.DataArray(
-                div_orig,
+                div_corr,
                 dims=ds["div"].dims,
                 coords=ds["div"].coords,
                 attrs=ds["div"].attrs,

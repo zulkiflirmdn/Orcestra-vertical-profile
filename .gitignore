@@ -120,6 +120,9 @@ dmypy.json
 *.swo
 *~
 
+# PBS/Gadi job output files
+vscode-compute.*
+
 # OS
 .DS_Store
 .DS_Store?
