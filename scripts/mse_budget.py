@@ -63,14 +63,20 @@ RD   = 287.05      # specific gas constant for dry air   [J kg⁻¹ K⁻¹]
 GMS_DENOM_MIN = 10.0
 
 DEFAULT_ZARR = "/g/data/k10/zr7147/ORCESTRA_dropsondes_categorized.zarr"
+DEFAULT_NC   = "/g/data/k10/zr7147/processed/orcestra_level4_categorized.nc"
 
 
 # ===========================================================================
 # Helpers
 # ===========================================================================
 
-def load_dataset(zarr_path=DEFAULT_ZARR):
-    return xr.open_zarr(zarr_path)
+def load_dataset(path=DEFAULT_NC):
+    """Load the categorized BEACH L4 dataset (NetCDF or zarr)."""
+    import pathlib
+    p = str(path)
+    if p.endswith(".zarr") or pathlib.Path(p).is_dir():
+        return xr.open_zarr(p)
+    return xr.open_dataset(p)
 
 
 def _mse(T, z, q):
@@ -405,7 +411,7 @@ def compute_budget(ds=None, zarr_path=DEFAULT_ZARR, mass_correct=False):
     flux_ds = method2_flux(ds)
     res_ds  = method3_residual(adv_ds, flux_ds)
 
-    meta_vars = ["omega", "category_evolutionary", "category_avg",
+    meta_vars = ["omega", "category_plane", "category_evolutionary", "category_avg",
                  "top_heaviness_angle"]
 
     out = xr.merge([adv_ds, flux_ds, res_ds])
@@ -712,6 +718,138 @@ def apply_mass_correction(ds):
     return ds_corr, delta_div
 
 
+def omega_step_zero(ds):
+    """
+    Hard-zero fix: set ω = 0 at the highest valid level of each circle.
+
+    Unlike the linear-ramp correction (omega_mass_corrected), this applies no
+    correction below the top — it simply zeros the boundary point directly.
+    The valid mask is identical to _vadv_col (finite omega & p & h_prof) so
+    the zero lands at the exact top of the integration domain.
+
+    Returns:
+        omega_step  (ncircle, nalt) ndarray  [Pa s⁻¹]
+    """
+    alt    = ds["altitude"].values
+    T      = ds["ta_mean"].values
+    q      = ds["q_mean"].values
+    p      = ds["p_mean"].values
+    omega  = ds["omega"].values
+    ncircle = ds.sizes["circle"]
+
+    h_prof     = _mse(T, alt[np.newaxis, :], q)
+    omega_step = omega.copy().astype(float)
+
+    for i in range(ncircle):
+        valid = np.isfinite(omega[i]) & np.isfinite(p[i]) & np.isfinite(h_prof[i])
+        if valid.sum() < 3:
+            continue
+        idx_top = np.where(valid)[0][-1]
+        omega_step[i, idx_top] = 0.0
+
+    return omega_step
+
+
+def apply_step_zero_correction(ds):
+    """
+    Return a copy of ds with ω zeroed at the profile top (step, not ramp).
+
+    This is the minimal boundary-closing assumption: assert ω = 0 at the
+    last valid level without distributing any correction below it.  The div
+    field is deliberately left unchanged — this function isolates the effect
+    of the boundary condition on the vertical-advection integral alone.
+
+    Returns:
+        ds_corr  xr.Dataset  corrected copy of ds
+    """
+    omega_step = omega_step_zero(ds)
+    ds_corr = ds.assign(
+        {
+            "omega": xr.DataArray(
+                omega_step,
+                dims=ds["omega"].dims,
+                coords=ds["omega"].coords,
+                attrs=ds["omega"].attrs,
+            )
+        }
+    )
+    return ds_corr
+
+
+def apply_step_zero_consistent(ds):
+    """
+    Hard-zero fix with consistent div correction.
+
+    Sets ω = 0 at the highest valid level AND corrects div at that same level
+    so that ∂ω_corr/∂p = −div_corr holds at the top of the column.
+
+    Derivation:
+        Zeroing ω_top changes ∂ω/∂p at the top interval by:
+            Δ(∂ω/∂p) = −ω_top / (p[idx_top−1] − p[idx_top])
+        Continuity requires div_corr = −∂ω_corr/∂p, so:
+            Δdiv[idx_top] = −ω_top / (p[idx_top−1] − p[idx_top])
+
+        All levels below the top are left unchanged — the correction is
+        concentrated entirely at the top grid point.
+
+    This differs from the linear-ramp correction which distributes a
+    depth-uniform Δdiv across the whole column.  The hard-zero concentrates
+    the same total correction at one level.
+
+    Returns:
+        ds_corr  xr.Dataset  corrected copy of ds
+    """
+    alt     = ds["altitude"].values
+    T       = ds["ta_mean"].values
+    q       = ds["q_mean"].values
+    p       = ds["p_mean"].values
+    omega   = ds["omega"].values
+    div     = ds["div"].values
+    ncircle = ds.sizes["circle"]
+
+    h_prof     = _mse(T, alt[np.newaxis, :], q)
+    omega_corr = omega.copy().astype(float)
+    div_corr   = div.copy().astype(float)
+
+    for i in range(ncircle):
+        valid = np.isfinite(omega[i]) & np.isfinite(p[i]) & np.isfinite(h_prof[i])
+        if valid.sum() < 3:
+            continue
+        idx_valid = np.where(valid)[0]
+        idx_top   = idx_valid[-1]
+        idx_prev  = idx_valid[-2]   # level just below the top
+
+        om_top = float(omega[i, idx_top])
+        dp     = float(p[i, idx_prev]) - float(p[i, idx_top])  # > 0 (sfc pressure higher)
+
+        if dp < 1.0:   # guard against degenerate spacing
+            continue
+
+        # Zero the top omega
+        omega_corr[i, idx_top] = 0.0
+
+        # Correct div at the top level only: Δdiv = −ω_top / Δp
+        div_corr[i, idx_top] -= om_top / dp
+
+    ds_corr = ds.assign(
+        {
+            "omega": xr.DataArray(
+                omega_corr,
+                dims=ds["omega"].dims,
+                coords=ds["omega"].coords,
+                attrs=ds["omega"].attrs,
+            ),
+            "div": xr.DataArray(
+                div_corr,
+                dims=ds["div"].dims,
+                coords=ds["div"].coords,
+                attrs=ds["div"].attrs,
+            ),
+        }
+    )
+    return ds_corr
+
+
 def method1_mass_corrected(ds):
     """
     Idea B applied — Method 1 vertical advection with mass-corrected omega.
@@ -784,7 +922,8 @@ if __name__ == "__main__":
         budget.drop_vars(["h_profile", "s_profile"]).to_netcdf(args.output)
         print(f"Saved to {args.output}")
     else:
-        cat = ds["category_evolutionary"].values
+        cat_var = "category_plane" if "category_plane" in ds else "category_evolutionary"
+        cat = ds[cat_var].values
         sep = "=" * 60
 
         for label in ["Top-Heavy", "Bottom-Heavy"]:

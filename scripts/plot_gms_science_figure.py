@@ -43,7 +43,7 @@ def bootstrap_gms(va, vd, n=N_BOOT):
 
 
 def group_gms(budget, cat):
-    cats = budget["category_avg"].values
+    cats = budget["category_plane"].values if "category_plane" in budget else budget["category_avg"].values
     mask = np.array([cat in str(c) for c in cats])
     va = budget["vert_adv"].values[mask]
     vd = budget["vert_adv_dse"].values[mask]
@@ -114,7 +114,7 @@ def make_figure(budget, out_path):
     # ── Right panel: vert_adv vs vert_adv_dse scatter ─────────────────────
     ax2 = axes[1]
     for cat in categories:
-        cats = budget["category_avg"].values
+        cats = budget["category_plane"].values if "category_plane" in budget else budget["category_avg"].values
         mask = np.array([cat in str(c) for c in cats])
         va_all = budget["vert_adv"].values[mask]
         vd_all = budget["vert_adv_dse"].values[mask]

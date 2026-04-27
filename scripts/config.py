@@ -52,6 +52,21 @@ def default_imerg_output_path() -> Path:
     )
 
 
+def default_era5_dir() -> Path:
+    """Root directory for ERA5 reanalysis data."""
+    return Path(os.environ.get("ORCESTRA_ERA5_DIR", "/g/data/k10/zr7147/ERA5"))
+
+
+def default_era5_omega_path() -> Path:
+    """ERA5 pressure-velocity (omega) file on pressure levels."""
+    return Path(
+        os.environ.get(
+            "ORCESTRA_ERA5_OMEGA_PATH",
+            "/g/data/k10/zr7147/ERA5/era5_omega_pressure_levels.nc",
+        )
+    )
+
+
 def default_earthcare_bbox() -> BoundingBox:
     """Return EarthCARE crop bounds (same as IMERG for consistency).
 
