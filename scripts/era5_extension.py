@@ -128,6 +128,120 @@ def match_era5_to_circle(era5_ds, circle_lat, circle_lon, circle_time,
 
 
 # ===========================================================================
+# ERA5-anchored O'Brien correction  (proper M4 preparation)
+# ===========================================================================
+
+def apply_era5_anchored_correction(ds_beach, era5_path=None):
+    """
+    O'Brien ramp correction that targets ERA5 ω at the BEACH profile top
+    instead of zero.
+
+    The standard linear ramp forces ω → 0 at the BEACH data top (~100 hPa),
+    imposing a false boundary condition at a level that still has real vertical
+    motion.  This function instead forces BEACH ω to smoothly connect to ERA5 ω
+    at the same pressure level, so the combined BEACH + ERA5 profile is
+    continuous across the junction.
+
+    For each circle:
+        1. Find the BEACH profile top: (idx_top, p_top, ω_beach_top).
+        2. Get ERA5 ω at the ERA5 pressure level nearest to p_top → ω_era5_junction.
+        3. Compute junction mismatch: Δω = ω_beach_top − ω_era5_junction.
+        4. Apply linear ramp:
+               ω_corr(p) = ω(p) − Δω · (p_sfc − p) / (p_sfc − p_top)
+           This zeroes the mismatch at p_top while preserving ω at the surface.
+        5. Consistent depth-uniform div correction:
+               Δdiv = Δω / (p_sfc − p_top)
+
+    Physical meaning:
+        After correction ω_beach_top ≈ ω_era5_junction, so stitching ERA5 above
+        gives a continuous profile with no jump at the junction.  ERA5 naturally
+        → 0 near 20 hPa, closing the column at the true atmospheric top.
+
+    Parameters
+    ----------
+    ds_beach  : xr.Dataset  BEACH L4 (from load_dataset())
+    era5_path : str or Path  path to ERA5 omega NetCDF
+
+    Returns
+    -------
+    ds_corr    : xr.Dataset  corrected copy of ds_beach
+    delta_div  : (ncircle,) ndarray  [s⁻¹]  uniform div adjustment per circle
+    """
+    from scripts.mse_budget import _mse
+
+    era5_ds = load_era5_omega(era5_path)
+
+    alt     = ds_beach['altitude'].values
+    omega   = ds_beach['omega'].values.astype(float)
+    p       = ds_beach['p_mean'].values.astype(float)
+    T       = ds_beach['ta_mean'].values
+    q       = ds_beach['q_mean'].values
+    div     = ds_beach['div'].values.astype(float)
+    ncircle = ds_beach.sizes['circle']
+
+    h_prof     = _mse(T, alt[np.newaxis, :], q)
+    omega_corr = omega.copy()
+    div_corr   = div.copy()
+    delta_div  = np.full(ncircle, np.nan)
+
+    for i in range(ncircle):
+        valid = np.isfinite(omega[i]) & np.isfinite(p[i]) & np.isfinite(h_prof[i])
+        if valid.sum() < 3:
+            continue
+
+        idx_valid = np.where(valid)[0]
+        idx_top   = idx_valid[-1]
+        idx_bot   = idx_valid[0]
+
+        p_top  = float(p[i, idx_top])
+        p_sfc  = float(p[i, idx_bot])
+        om_top = float(omega[i, idx_top])
+
+        if p_sfc - p_top < 1e3:
+            continue
+
+        # Get ERA5 ω at the ERA5 level nearest to the BEACH profile top
+        try:
+            om_e, p_e, _, _ = match_era5_to_circle(
+                era5_ds,
+                float(ds_beach['circle_lat'].values[i]),
+                float(ds_beach['circle_lon'].values[i]),
+                ds_beach['circle_time'].values[i],
+            )
+        except Exception:
+            continue
+
+        # Nearest ERA5 level to p_top
+        nearest_idx     = int(np.argmin(np.abs(p_e - p_top)))
+        om_era5_junction = float(om_e[nearest_idx])
+
+        # Junction mismatch — this is what the ramp needs to remove
+        delta_om = om_top - om_era5_junction
+
+        if abs(delta_om) < 1e-8:
+            continue   # profiles already match at junction
+
+        # Linear ramp over the BEACH valid column
+        ramp = delta_om * (p_sfc - p[i, idx_valid]) / (p_sfc - p_top)
+        omega_corr[i, idx_valid] -= ramp
+
+        # Depth-uniform div correction (continuity: Δdiv = Δω / Δp)
+        dd = delta_om / (p_sfc - p_top)
+        div_corr[i, idx_valid] -= dd
+        delta_div[i] = dd
+
+    ds_corr = ds_beach.assign({
+        'omega': xr.DataArray(omega_corr, dims=ds_beach['omega'].dims,
+                              coords=ds_beach['omega'].coords,
+                              attrs=ds_beach['omega'].attrs),
+        'div':   xr.DataArray(div_corr,   dims=ds_beach['div'].dims,
+                              coords=ds_beach['div'].coords,
+                              attrs=ds_beach['div'].attrs),
+    })
+    return ds_corr, delta_div
+
+
+# ===========================================================================
 # Stitching
 # ===========================================================================
 
