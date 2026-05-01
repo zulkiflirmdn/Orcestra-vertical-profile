@@ -42,6 +42,13 @@ def _default_era5_omega_path():
     return default_era5_omega_path()
 
 
+def _get_era5_ds(era5_ds, era5_path):
+    """Return era5_ds if already loaded, otherwise load from era5_path."""
+    if era5_ds is not None:
+        return era5_ds
+    return load_era5_omega(era5_path)
+
+
 # ===========================================================================
 # ERA5 loading
 # ===========================================================================
@@ -131,7 +138,7 @@ def match_era5_to_circle(era5_ds, circle_lat, circle_lon, circle_time,
 # ERA5-anchored O'Brien correction  (proper M4 preparation)
 # ===========================================================================
 
-def apply_era5_anchored_correction(ds_beach, era5_path=None):
+def apply_era5_anchored_correction(ds_beach, era5_path=None, era5_ds=None):
     """
     O'Brien ramp correction that targets ERA5 ω at the BEACH profile top
     instead of zero.
@@ -169,7 +176,7 @@ def apply_era5_anchored_correction(ds_beach, era5_path=None):
     """
     from scripts.mse_budget import _mse
 
-    era5_ds = load_era5_omega(era5_path)
+    era5_ds = _get_era5_ds(era5_ds, era5_path)
 
     alt     = ds_beach['altitude'].values
     omega   = ds_beach['omega'].values.astype(float)
@@ -245,7 +252,7 @@ def apply_era5_anchored_correction(ds_beach, era5_path=None):
 # Stitching
 # ===========================================================================
 
-def stitch_beach_era5(ds_beach, era5_path=None, p_stitch_pa=15000.0):
+def stitch_beach_era5(ds_beach, era5_path=None, p_stitch_pa=15000.0, era5_ds=None):
     """
     Extend BEACH L4 omega profiles upward using ERA5 above p_stitch_pa.
 
@@ -279,7 +286,7 @@ def stitch_beach_era5(ds_beach, era5_path=None, p_stitch_pa=15000.0):
     """
     from scripts.mse_budget import _mse
 
-    era5_ds = load_era5_omega(era5_path)
+    era5_ds = _get_era5_ds(era5_ds, era5_path)
 
     alt     = ds_beach['altitude'].values          # (nalt,) metres, uniform 10 m
     omega_b = ds_beach['omega'].values.astype(float)
@@ -290,9 +297,9 @@ def stitch_beach_era5(ds_beach, era5_path=None, p_stitch_pa=15000.0):
     nalt    = ds_beach.sizes['altitude']
     h_prof  = _mse(T_b, alt[np.newaxis, :], q_b)
 
-    # Max number of ERA5 levels that could be added
+    # Max ERA5 levels that could be added (all levels above p_stitch_pa + buffer)
     era5_p_all  = era5_ds['pressure_level_pa'].values
-    n_era5_max  = int((era5_p_all < p_stitch_pa).sum())
+    n_era5_max  = len(era5_p_all)   # safe upper bound: ERA5 can fill from p_top upward
     n_ext       = nalt + n_era5_max
 
     omega_ext    = np.full((ncircle, n_ext), np.nan)
@@ -321,17 +328,7 @@ def stitch_beach_era5(ds_beach, era5_path=None, p_stitch_pa=15000.0):
         except Exception:
             continue
 
-        above = p_e < p_stitch_pa
-        if above.sum() == 0:
-            continue
-
-        om_add  = om_e[above]
-        p_add   = p_e[above]
-        t_add   = t_e[above]
-        div_add = div_e[above]
-        n_add   = len(om_add)
-
-        # Find top of BEACH valid data for this circle
+        # Find top of BEACH valid data for this circle first
         valid_b = (np.isfinite(omega_b[i]) & np.isfinite(p_b[i])
                    & np.isfinite(h_prof[i]))
         if valid_b.sum() < 3:
@@ -340,6 +337,17 @@ def stitch_beach_era5(ds_beach, era5_path=None, p_stitch_pa=15000.0):
         z_top   = float(alt[idx_top])
         p_top   = float(p_b[i, idx_top])
         T_top   = float(T_b[i, idx_top])
+
+        # Add ERA5 levels strictly above the BEACH top (no gap at junction)
+        above = p_e < p_top
+        if above.sum() == 0:
+            continue
+
+        om_add  = om_e[above]
+        p_add   = p_e[above]
+        t_add   = t_e[above]
+        div_add = div_e[above]
+        n_add   = len(om_add)
 
         # Altitude of each ERA5 level via hypsometric equation
         z_add = np.array([
@@ -395,7 +403,7 @@ def stitch_beach_era5(ds_beach, era5_path=None, p_stitch_pa=15000.0):
 # Budget helper for ERA5-extended column
 # ===========================================================================
 
-def compute_budget_ext(ds_ext, mass_correct=False):
+def compute_budget_ext(ds_ext, mass_correct=False, recompute_div=False):
     """
     Compute the MSE budget using the ERA5-extended omega and pressure columns.
 
@@ -409,14 +417,23 @@ def compute_budget_ext(ds_ext, mass_correct=False):
 
     Parameters
     ----------
-    ds_ext       : xr.Dataset  returned by stitch_beach_era5()
-    mass_correct : bool  passed through to compute_budget()
+    ds_ext        : xr.Dataset  returned by stitch_beach_era5() or blend_beach_era5()
+    mass_correct  : bool  passed through to compute_budget()
+    recompute_div : bool  if True, derive div = −∂ω/∂p from the stitched omega
+                    profile per circle instead of using div_era5_ext.  This
+                    ensures exact consistency between omega and div throughout
+                    the extended column, eliminating spurious residuals caused
+                    by (a) the div jump at the BEACH–ERA5 junction or (b) the
+                    cosine-blend inconsistency in M4.  GMS (vert_adv) is
+                    unaffected since it uses omega directly.  Default False for
+                    backward compatibility; pass True for M3 and M4.
     """
     from scripts.mse_budget import compute_budget
 
     nalt_orig = ds_ext.sizes['altitude']
     n_ext     = ds_ext.sizes['ext_level']
     n_pad     = n_ext - nalt_orig
+    ncircle   = ds_ext.sizes['circle']
 
     def _pad_nan(arr2d):
         """Pad with NaN (for variables with no ERA5 equivalent)."""
@@ -434,12 +451,31 @@ def compute_budget_ext(ds_ext, mass_correct=False):
     alt_mean = np.nanmean(ds_ext['alt_ext'].values, axis=0)
 
     # ta_mean for the extended column: BEACH T below, ERA5 T above
-    # ta_era5_ext already has BEACH T in the BEACH positions and ERA5 T in
-    # the ERA5 positions, so it is the complete extended temperature array.
     ta_ext = ds_ext['ta_era5_ext'].values   # (circle, ext_level)
 
     # q_mean: BEACH q below, 0 above tropopause (ERA5 levels are dry)
     q_ext  = _pad_zero(ds_ext['q_mean'].values)
+
+    # Divergence field
+    if recompute_div:
+        # Derive div = −∂ω/∂p from the extended omega profile per circle.
+        # This ensures exact consistency between omega and div throughout the
+        # column — eliminating the junction-discontinuity residual in M3 and
+        # the cosine-blend inconsistency in M4.
+        omega_ext = ds_ext['omega_ext'].values
+        p_ext     = ds_ext['p_ext'].values
+        div_ext   = np.full_like(omega_ext, np.nan)
+        for i in range(ncircle):
+            valid = np.isfinite(omega_ext[i]) & np.isfinite(p_ext[i])
+            if valid.sum() < 3:
+                continue
+            idx = np.where(valid)[0]
+            # p_ext is sorted descending (surface first); np.gradient handles
+            # non-uniform spacing and returns the correct sign automatically.
+            div_ext[i, idx] = -np.gradient(omega_ext[i, idx], p_ext[i, idx])
+        div_to_use = div_ext
+    else:
+        div_to_use = ds_ext['div_era5_ext'].values
 
     coords = {
         'circle':      ds_ext['circle'],
@@ -456,9 +492,7 @@ def compute_budget_ext(ds_ext, mass_correct=False):
             'p_mean':   _da(ds_ext['p_ext'].values),
             'ta_mean':  _da(ta_ext, ds_ext['ta_mean'].attrs),
             'q_mean':   _da(q_ext,  ds_ext['q_mean'].attrs),
-            # div_era5_ext already has BEACH div in BEACH positions and
-            # ERA5 div (= -∂ω/∂p) in ERA5 positions — use it directly.
-            'div':      _da(ds_ext['div_era5_ext'].values),
+            'div':      _da(div_to_use),
             'ta_dtadx': _da(_pad_nan(ds_ext['ta_dtadx'].values)),
             'ta_dtady': _da(_pad_nan(ds_ext['ta_dtady'].values)),
             'q_dqdx':   _da(_pad_nan(ds_ext['q_dqdx'].values)),
@@ -469,6 +503,271 @@ def compute_budget_ext(ds_ext, mass_correct=False):
         coords=coords,
     )
     return compute_budget(ds_new, mass_correct=mass_correct)
+
+
+# ===========================================================================
+# Method 4 — cosine blend near BEACH top
+# ===========================================================================
+
+def blend_beach_era5(ds_beach, era5_path=None, era5_ds=None,
+                     blend_width_pa=5000.0, p_stitch_pa=15000.0):
+    """
+    Method 4 omega preparation: smooth cosine blend from BEACH to ERA5.
+
+    Unlike the O'Brien ramp (which applies a linear correction across the
+    entire BEACH column), this only modifies the top `blend_width_pa` Pa of
+    each profile.  BEACH omega is completely unchanged below that zone.
+
+    For each circle:
+        1.  Find BEACH top pressure p_top and surface pressure p_sfc.
+        2.  Define blend zone: p in [p_top, min(p_top + blend_width_pa, p_sfc)].
+        3.  Interpolate ERA5 omega and div to each BEACH pressure in blend zone.
+        4.  Apply cosine taper:
+                frac = (p_blend_bot − p) / blend_width_pa   [0 at blend_bot, 1 at p_top]
+                w(p) = 0.5 * (1 + cos(π · frac))
+                → w = 1 at p_blend_bot (pure BEACH), w = 0 at p_top (pure ERA5)
+                omega_blend = w * omega_beach + (1−w) * omega_era5_interp
+        5.  Stitch pure ERA5 levels above p_top (no gap at junction).
+        6.  Apply same cosine taper to divergence in the blend zone.
+
+    The physical motivation: the O'Brien ramp distorts the whole BEACH column
+    to fix the boundary.  Here only the topmost ~50 hPa are modified, keeping
+    the observationally-constrained mid-troposphere intact.
+
+    Parameters
+    ----------
+    ds_beach        : xr.Dataset  BEACH L4
+    era5_path       : str or None  path to ERA5 NetCDF (used if era5_ds is None)
+    era5_ds         : xr.Dataset or None  pre-loaded ERA5 (avoids re-loading)
+    blend_width_pa  : float  [Pa]  width of the cosine transition zone.
+                      Default 5000 Pa (50 hPa).
+    p_stitch_pa     : float  [Pa]  skip circle if BEACH top > this pressure.
+                      Default 15000 Pa (150 hPa).
+
+    Returns ds_ext in the same format as stitch_beach_era5() so that
+    compute_budget_ext() can be called directly on the result.
+    """
+    from scripts.mse_budget import _mse
+
+    era5_ds = _get_era5_ds(era5_ds, era5_path)
+
+    alt     = ds_beach['altitude'].values
+    omega_b = ds_beach['omega'].values.astype(float)
+    p_b     = ds_beach['p_mean'].values.astype(float)
+    T_b     = ds_beach['ta_mean'].values
+    q_b     = ds_beach['q_mean'].values
+    div_b   = ds_beach['div'].values.astype(float)
+    ncircle = ds_beach.sizes['circle']
+    nalt    = ds_beach.sizes['altitude']
+    h_prof  = _mse(T_b, alt[np.newaxis, :], q_b)
+
+    era5_p_all = era5_ds['pressure_level_pa'].values
+    n_era5_max = len(era5_p_all)
+    n_ext      = nalt + n_era5_max
+
+    omega_ext    = np.full((ncircle, n_ext), np.nan)
+    p_ext        = np.full((ncircle, n_ext), np.nan)
+    alt_ext      = np.full((ncircle, n_ext), np.nan)
+    ta_era5_ext  = np.full((ncircle, n_ext), np.nan)
+    div_era5_ext = np.full((ncircle, n_ext), np.nan)
+    era5_n       = np.zeros(ncircle, dtype=int)
+
+    # Fill BEACH portion (blend will modify top levels in-place)
+    omega_ext[:,    :nalt] = omega_b
+    p_ext[:,        :nalt] = p_b
+    alt_ext[:,      :nalt] = alt[np.newaxis, :]
+    ta_era5_ext[:,  :nalt] = T_b
+    div_era5_ext[:, :nalt] = div_b
+
+    for i in range(ncircle):
+        try:
+            om_e, p_e, t_e, div_e = match_era5_to_circle(
+                era5_ds,
+                float(ds_beach['circle_lat'].values[i]),
+                float(ds_beach['circle_lon'].values[i]),
+                ds_beach['circle_time'].values[i],
+            )
+        except Exception:
+            continue
+
+        valid_b = (np.isfinite(omega_b[i]) & np.isfinite(p_b[i])
+                   & np.isfinite(h_prof[i]))
+        if valid_b.sum() < 3:
+            continue
+
+        idx_valid   = np.where(valid_b)[0]
+        idx_top     = idx_valid[-1]
+        idx_bot     = idx_valid[0]
+        p_top       = float(p_b[i, idx_top])
+        p_sfc       = float(p_b[i, idx_bot])
+        p_blend_bot = min(p_top + blend_width_pa, p_sfc)
+
+        # ERA5 sorted ascending pressure (low p first) for np.interp
+        sort_asc  = np.argsort(p_e)
+        p_e_asc   = p_e[sort_asc]
+        om_e_asc  = om_e[sort_asc]
+        div_e_asc = div_e[sort_asc]
+
+        # Apply cosine blend to BEACH levels inside the blend zone
+        for j in idx_valid:
+            p_j = float(p_b[i, j])
+            if p_j > p_blend_bot:
+                continue  # below blend zone — keep raw BEACH
+
+            # ERA5 interpolated to this BEACH pressure level
+            om_era5_j  = float(np.interp(p_j, p_e_asc, om_e_asc))
+            div_era5_j = float(np.interp(p_j, p_e_asc, div_e_asc))
+
+            # frac=0 at p_blend_bot (pure BEACH), frac=1 at p_top (pure ERA5)
+            denom = max(p_blend_bot - p_top, 1.0)
+            frac  = (p_blend_bot - p_j) / denom
+            w     = 0.5 * (1.0 + np.cos(np.pi * frac))
+
+            omega_ext[i, j]    = w * omega_b[i, j] + (1.0 - w) * om_era5_j
+            div_era5_ext[i, j] = w * div_b[i, j]   + (1.0 - w) * div_era5_j
+
+        # Stitch pure ERA5 above the BEACH top (no gap)
+        above = p_e < p_top
+        if above.sum() == 0:
+            continue
+
+        om_add  = om_e[above]
+        p_add   = p_e[above]
+        t_add   = t_e[above]
+        div_add = div_e[above]
+        n_add   = len(om_add)
+        T_top   = float(T_b[i, idx_top])
+        z_top   = float(alt[idx_top])
+
+        z_add = np.array([
+            z_top + (RD * 0.5 * (T_top + float(t_add[k]))
+                     * np.log(p_top / float(p_add[k]))) / G
+            for k in range(n_add)
+        ])
+
+        n_fill = min(n_add, n_era5_max)
+        omega_ext[i,    nalt:nalt + n_fill] = om_add[:n_fill]
+        p_ext[i,        nalt:nalt + n_fill] = p_add[:n_fill]
+        alt_ext[i,      nalt:nalt + n_fill] = z_add[:n_fill]
+        ta_era5_ext[i,  nalt:nalt + n_fill] = t_add[:n_fill]
+        div_era5_ext[i, nalt:nalt + n_fill] = div_add[:n_fill]
+        era5_n[i]                            = n_fill
+
+    # Sort by descending pressure per circle
+    for i in range(ncircle):
+        finite = np.isfinite(p_ext[i])
+        if finite.sum() < 2:
+            continue
+        idx_f = np.where(finite)[0]
+        order = idx_f[np.argsort(p_ext[i, idx_f])[::-1]]
+        n_f   = len(order)
+        for arr in (omega_ext, p_ext, alt_ext, ta_era5_ext, div_era5_ext):
+            buf = np.full(n_ext, np.nan)
+            buf[:n_f] = arr[i, order]
+            arr[i]    = buf
+
+    ds_ext = ds_beach.assign({
+        'omega_ext': xr.DataArray(
+            omega_ext, dims=('circle', 'ext_level'),
+            attrs={'units': 'Pa s-1',
+                   'long_name': 'omega: cosine-blended BEACH→ERA5 (M4)'}),
+        'p_ext': xr.DataArray(
+            p_ext, dims=('circle', 'ext_level'),
+            attrs={'units': 'Pa'}),
+        'alt_ext': xr.DataArray(
+            alt_ext, dims=('circle', 'ext_level'),
+            attrs={'units': 'm'}),
+        'ta_era5_ext': xr.DataArray(
+            ta_era5_ext, dims=('circle', 'ext_level'),
+            attrs={'units': 'K',
+                   'long_name': 'temperature: BEACH below, ERA5 above'}),
+        'div_era5_ext': xr.DataArray(
+            div_era5_ext, dims=('circle', 'ext_level'),
+            attrs={'units': 's-1',
+                   'long_name': 'div: cosine-blended near top, ERA5 above'}),
+        'era5_n_levels': xr.DataArray(
+            era5_n, dims='circle',
+            attrs={'long_name': 'ERA5 levels added above BEACH top'}),
+    })
+    ds_ext.attrs.update({
+        'blend_width_pa': str(blend_width_pa),
+        'p_stitch_pa':    str(p_stitch_pa),
+        'method':         'M4_cosine_blend',
+    })
+    return ds_ext
+
+
+# ===========================================================================
+# Pipeline wrappers — Methods 3 and 4
+# ===========================================================================
+
+def compute_budget_m3(ds_beach, era5_path=None, era5_ds=None, p_stitch_pa=15000.0):
+    """
+    Full Method 3 pipeline: ERA5-anchored O'Brien ramp → stitch → budget.
+
+    Steps:
+        1.  apply_era5_anchored_correction — linear ramp corrects BEACH omega
+            so that omega_beach_top ≈ omega_era5 at the junction pressure.
+            Updates div consistently throughout the BEACH column.
+        2.  stitch_beach_era5 — appends ERA5 levels above BEACH top.
+            With the ramp applied first, the junction is continuous.
+        3.  compute_budget_ext — MSE budget on the extended column.
+
+    The O'Brien ramp distorts the entire BEACH column (every level gets a
+    small correction), but ensures a smooth BEACH→ERA5 transition.
+
+    Parameters
+    ----------
+    ds_beach     : xr.Dataset  BEACH L4
+    era5_path    : str or None  path to ERA5 NetCDF (used if era5_ds is None)
+    era5_ds      : xr.Dataset or None  pre-loaded ERA5 (avoids triple load)
+    p_stitch_pa  : float [Pa]  skip circle if BEACH top > this. Default 150 hPa.
+
+    Returns
+    -------
+    budget     : xr.Dataset  MSE budget (same variables as compute_budget)
+    delta_div  : (ncircle,) ndarray [s⁻¹]  div correction applied per circle
+    ds_ext     : xr.Dataset  stitched extended dataset (for diagnostics)
+    """
+    era5 = _get_era5_ds(era5_ds, era5_path)
+    ds_corr, delta_div = apply_era5_anchored_correction(ds_beach, era5_ds=era5)
+    ds_ext = stitch_beach_era5(ds_corr, era5_ds=era5, p_stitch_pa=p_stitch_pa)
+    budget = compute_budget_ext(ds_ext, recompute_div=True)
+    return budget, delta_div, ds_ext
+
+
+def compute_budget_m4(ds_beach, era5_path=None, era5_ds=None,
+                      blend_width_pa=5000.0, p_stitch_pa=15000.0):
+    """
+    Full Method 4 pipeline: cosine blend near BEACH top → stitch → budget.
+
+    Steps:
+        1.  blend_beach_era5 — cosine taper from BEACH→ERA5 in the top
+            blend_width_pa Pa of the profile.  BEACH unchanged below.
+        2.  compute_budget_ext — MSE budget on the blended + stitched column.
+
+    Unlike Method 3, no global correction is applied; only the topmost
+    ~50 hPa (default blend_width_pa=5000 Pa) are modified.
+
+    Parameters
+    ----------
+    ds_beach        : xr.Dataset  BEACH L4
+    era5_path       : str or None  path to ERA5 NetCDF (used if era5_ds is None)
+    era5_ds         : xr.Dataset or None  pre-loaded ERA5
+    blend_width_pa  : float [Pa]  blend zone width. Default 5000 Pa (50 hPa).
+    p_stitch_pa     : float [Pa]  skip circle if BEACH top > this. Default 150 hPa.
+
+    Returns
+    -------
+    budget  : xr.Dataset  MSE budget (same variables as compute_budget)
+    ds_ext  : xr.Dataset  blended extended dataset (for diagnostics / omega plots)
+    """
+    era5 = _get_era5_ds(era5_ds, era5_path)
+    ds_ext = blend_beach_era5(ds_beach, era5_ds=era5,
+                              blend_width_pa=blend_width_pa,
+                              p_stitch_pa=p_stitch_pa)
+    budget = compute_budget_ext(ds_ext, recompute_div=True)
+    return budget, ds_ext
 
 
 # ===========================================================================

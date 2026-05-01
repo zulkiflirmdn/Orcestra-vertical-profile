@@ -1,0 +1,28 @@
+#!/bin/bash
+#PBS -N era5_slice
+#PBS -P k10
+#PBS -q normal
+#PBS -l ncpus=4
+#PBS -l mem=64GB
+#PBS -l walltime=12:00:00
+#PBS -l storage=gdata/rt52+gdata/k10+scratch/nf33
+#PBS -l jobfs=10GB
+#PBS -j oe
+#PBS -o /g/data/k10/zr7147/ERA5/PBL/era5_slice_pbs.log
+
+set -euo pipefail
+
+source /g/data/k10/zr7147/miniconda3/etc/profile.d/conda.sh
+conda activate /g/data/k10/zr7147/orcestra_env
+
+cd /home/565/zr7147/Proj/notebooks
+
+jupyter nbconvert \
+    --to notebook \
+    --execute \
+    --inplace \
+    --ExecutePreprocessor.timeout=43200 \
+    era5_slice.ipynb
+
+echo "Done. Output: /g/data/k10/zr7147/ERA5/PBL/era5_project.nc"
+ls -lh /g/data/k10/zr7147/ERA5/PBL/era5_project.nc
