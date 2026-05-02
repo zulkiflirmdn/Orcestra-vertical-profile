@@ -220,6 +220,24 @@ def get_era5_tcwv_at_circles(
     return pd.DataFrame(records)
 
 
+# Longitude boundary separating East and West Atlantic sampling regions.
+# There is a natural data gap from -33°W to -44°W between the Cape Verde
+# (MAESTRO) and Barbados (PERCUSION) legs of the ORCESTRA campaign.
+EAST_WEST_BOUNDARY_LON: float = -38.0
+
+
+def classify_region(lon: float, boundary: float = EAST_WEST_BOUNDARY_LON) -> str:
+    """Classify a circle as 'East Atlantic' or 'West Atlantic'.
+
+    The ORCESTRA campaign operated from two bases:
+        East Atlantic  — Cape Verde / Mindelo  (~-25°W), Aug 2024
+        West Atlantic  — Barbados              (~-55°W), Sep 2024
+
+    A natural data gap at ~-38°W separates the two sampling regions.
+    """
+    return "East Atlantic" if lon > boundary else "West Atlantic"
+
+
 def build_circle_metrics(
     ds_sonde: xr.Dataset,
     ds_imerg: xr.Dataset | None = None,
@@ -244,16 +262,18 @@ def build_circle_metrics(
     for circle_idx in ds_sonde["circle"].values:
         c = ds_sonde.sel(circle=circle_idx)
         cat_raw = str(c["category_avg"].values)
+        clon = float(c["circle_lon"].values)
         beach_rows.append({
             "circle": int(circle_idx),
             "circle_lat": float(c["circle_lat"].values),
-            "circle_lon": float(c["circle_lon"].values),
+            "circle_lon": clon,
             "circle_time": pd.Timestamp(str(c["circle_time"].values)),
             "circle_radius_km": float(c["circle_radius"].values) / 1000.0,
             "iwv_mean": float(c["iwv_mean"].values),
             "top_heaviness_angle": float(c["top_heaviness_angle"].values),
             "category_raw": cat_raw,
             "category": simplify_category(cat_raw),
+            "region": classify_region(clon),
         })
     df_beach = pd.DataFrame(beach_rows)
 
