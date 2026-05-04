@@ -1,7 +1,14 @@
-# SPEC: Dropsonde vs Satellite Comparison
+# ~~SPEC: Dropsonde vs Satellite Comparison~~
 
-## Purpose
-This file is the persistent source of truth for the dropsonde-vs-satellite task so future Copilot sessions do not lose the detailed requirements.
+> **⚠️ SUPERSEDED / ARCHIVED — 2026-05-04**
+> EarthCARE has been **dropped** from this project. This spec required EarthCARE as the bottom-right panel, which is no longer in scope.
+> The active comparison workflow uses **IMERG only**. See `CLAUDE.md` for current data strategy.
+> Do NOT implement anything from this file — it will conflict with current project rules.
+
+---
+
+## Purpose *(archived)*
+This file was the source of truth for the dropsonde-vs-satellite task. Kept for historical reference only.
 
 ## Primary Goal
 Create a workflow that compares dropsonde-derived vertical velocity profiles with satellite precipitation for the same date, time, and location, using dropsonde information as the reference for time matching and spatial cropping.

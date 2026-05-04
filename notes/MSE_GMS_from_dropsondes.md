@@ -613,7 +613,10 @@ external datasets are needed:
 
 - **IMERG precipitation**: `/g/data/k10/zr7147/GPM_IMERG_Data/` and combined
   file `ORCESTRA_IMERG_Combined_Cropped.nc`
-- **EarthCARE CPR**: `/g/data/k10/zr7147/EarthCARE_Data/`
+- **ERA5 (NCI archive)**: `/g/data/rt52/era5/` — full archive, no download needed
+- **ERA5 local slice**: `/g/data/k10/zr7147/ERA5/` — pre-sliced SST, TCWV
+
+> **EarthCARE is DROPPED** — removed from scope. Do not implement or reference.
 
 ### 10.2 What Would Need To Be Downloaded
 

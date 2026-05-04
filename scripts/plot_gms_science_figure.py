@@ -66,7 +66,7 @@ def make_figure(budget, out_path):
     fig, axes = plt.subplots(1, 2, figsize=(12, 6))
     fig.suptitle(
         "Gross Moist Stability by Convective Category\n"
-        "ORCESTRA BEACH L4 · Method 1 (GMS$_\\mathrm{adv}$) · Mass-corrected",
+        "ORCESTRA BEACH L4 · Method 4 (GMS$_\\mathrm{adv}$) · ERA5 cosine-blend boundary closure",
         fontsize=13, fontweight="bold"
     )
 

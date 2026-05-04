@@ -297,19 +297,29 @@ Extend BEACH profiles to the tropopause by blending with ERA5 data above the pro
 
 ## 9. Recommendation for RQ2
 
-**Use Method 1 GMS_adv as the primary metric.**
+> **⚠️ SUPERSEDED — See CLAUDE.md Hard Rule 8.**  
+> This section was written before Method 4 (M4) was implemented. **M4 is the current primary method.** The description below explains the advective formula, which M4 also uses internally — but M4 adds a cosine-blend boundary closure with ERA5. Do not use raw Method 1 (open boundary) as the primary result.
+
+**CURRENT primary method: M4 (`compute_budget_m4` in `scripts/era5_extension.py`)**  
+**CURRENT primary result: ΔGMS = +0.90 (Top-Heavy − Bottom-Heavy)**
+
+---
+
+**Historical context — why Method 1 (advective) was chosen over Methods 2 & 3:**
+
+The advective GMS formula:
 
 $$\tilde{M}_\text{adv} = \frac{\langle \omega \, \partial h / \partial p \rangle}{\langle \omega \, \partial s / \partial p \rangle}$$
 
-It is:
-- The only method unaffected by the open-boundary problem
+was the basis because it is:
 - Directly connected to the omega profile shape (top-heavy vs bottom-heavy)
 - Numerically stable (uses `∂h/∂z` on the uniform 10 m grid)
-- Physically interpretable: how efficiently the omega profile exports MSE relative to DSE
+- Unaffected by the h·div amplification problem of Method 2
 
-**Current results support the expected direction of RQ2:**  
-Top-heavy GMS_adv (0.29) > Bottom-heavy GMS_adv (−0.03 median), consistent with the theoretical chain:
-$$\text{Top-Heavy } \omega \rightarrow \text{Larger GMS} \rightarrow \text{More efficient energy export}$$
+M4 builds on this same formula but adds ERA5 cosine-blend closure at the upper boundary (top ~50 hPa), which removes the open-boundary error from raw Method 1.
+
+**Earlier results (open boundary, Method 1 only — for reference):**  
+Top-heavy GMS_adv (0.29) > Bottom-heavy GMS_adv (−0.03 median)
 
 **Method 2 and 3 are useful for:**
 - Documenting the budget closure problem (boundary term)

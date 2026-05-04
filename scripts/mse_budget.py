@@ -63,15 +63,16 @@ RD   = 287.05      # specific gas constant for dry air   [J kg⁻¹ K⁻¹]
 GMS_DENOM_MIN = 10.0
 
 DEFAULT_ZARR = "/g/data/k10/zr7147/ORCESTRA_dropsondes_categorized.zarr"
-DEFAULT_NC   = "/g/data/k10/zr7147/processed/orcestra_level4_categorized.nc"
+# DEFAULT_NC is kept for legacy compat only — always prefer DEFAULT_ZARR
+DEFAULT_NC   = DEFAULT_ZARR
 
 
 # ===========================================================================
 # Helpers
 # ===========================================================================
 
-def load_dataset(path=DEFAULT_NC):
-    """Load the categorized BEACH L4 dataset (NetCDF or zarr)."""
+def load_dataset(path=DEFAULT_ZARR):
+    """Load the categorized BEACH L4 dataset (zarr — canonical source)."""
     import pathlib
     p = str(path)
     if p.endswith(".zarr") or pathlib.Path(p).is_dir():

@@ -36,11 +36,15 @@ import xarray as xr
 # Defaults
 # ---------------------------------------------------------------------------
 
-DEFAULT_NC   = Path("/g/data/k10/zr7147/raw/orcestra_level4.nc")
-DEFAULT_OUT  = Path("/g/data/k10/zr7147/processed/omega_plane_categorization.csv")
+# NOTE: CLI mode reads the zarr directly; DEFAULT_NC is unused legacy path kept for argparse compat.
+DEFAULT_NC   = Path("/g/data/k10/zr7147/ORCESTRA_dropsondes_categorized.zarr")
+DEFAULT_OUT  = Path("/g/data/k10/zr7147/ORCESTRA_dropsondes_categories.csv")
 
-P_SFC = 1000.0   # hPa
-P_TOP = 100.0    # hPa
+# Basis function integration bounds in hPa — used ONLY for the mode projection math.
+# Project rule is Pa everywhere, but the Singh & Li (2025) basis functions are
+# defined on a normalised [100, 1000] hPa grid, so this internal conversion is intentional.
+P_SFC = 1000.0   # hPa (basis function domain only — do not expose in outputs)
+P_TOP = 100.0    # hPa (basis function domain only)
 R_THRESHOLD = 20.0
 
 

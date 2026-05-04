@@ -135,13 +135,16 @@ def match_era5_to_circle(era5_ds, circle_lat, circle_lon, circle_time,
 
 
 # ===========================================================================
-# ERA5-anchored O'Brien correction  (proper M4 preparation)
+# ERA5-anchored O'Brien ramp correction  — used by M3 only
+# (M4 uses cosine blend instead — see blend_beach_era5 below)
 # ===========================================================================
 
 def apply_era5_anchored_correction(ds_beach, era5_path=None, era5_ds=None):
     """
-    O'Brien ramp correction that targets ERA5 ω at the BEACH profile top
-    instead of zero.
+    M3: O'Brien ramp correction that targets ERA5 ω at the BEACH profile top
+    instead of zero.  This applies a global linear ramp across the full BEACH
+    column.  M4 is preferred — it uses a local cosine taper only in the top
+    ~50 hPa, leaving the rest of the BEACH profile unchanged.
 
     The standard linear ramp forces ω → 0 at the BEACH data top (~100 hPa),
     imposing a false boundary condition at a level that still has real vertical
