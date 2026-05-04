@@ -451,7 +451,10 @@ def compute_budget_ext(ds_ext, mass_correct=False, recompute_div=False):
         )
 
     # Mean altitude profile — correct metres for np.gradient in _vadv_col
-    alt_mean = np.nanmean(ds_ext['alt_ext'].values, axis=0)
+    import warnings as _w
+    with _w.catch_warnings():
+        _w.simplefilter("ignore", RuntimeWarning)
+        alt_mean = np.nanmean(ds_ext['alt_ext'].values, axis=0)
 
     # ta_mean for the extended column: BEACH T below, ERA5 T above
     ta_ext = ds_ext['ta_era5_ext'].values   # (circle, ext_level)
@@ -564,9 +567,11 @@ def blend_beach_era5(ds_beach, era5_path=None, era5_ds=None,
     nalt    = ds_beach.sizes['altitude']
     h_prof  = _mse(T_b, alt[np.newaxis, :], q_b)
 
-    era5_p_all = era5_ds['pressure_level_pa'].values
-    n_era5_max = len(era5_p_all)
-    n_ext      = nalt + n_era5_max
+    era5_p_all          = era5_ds['pressure_level_pa'].values
+    p_era5_min          = float(era5_p_all.min())
+    era5_interp_step_pa = 500.0   # 5 hPa fine grid for smooth upper extension
+    n_era5_max          = int((100000.0 - p_era5_min) / era5_interp_step_pa) + 10
+    n_ext               = nalt + n_era5_max
 
     omega_ext    = np.full((ncircle, n_ext), np.nan)
     p_ext        = np.full((ncircle, n_ext), np.nan)
@@ -603,6 +608,9 @@ def blend_beach_era5(ds_beach, era5_path=None, era5_ds=None,
         idx_bot     = idx_valid[0]
         p_top       = float(p_b[i, idx_top])
         p_sfc       = float(p_b[i, idx_bot])
+        
+        # Blend zone: only the top `blend_width_pa` Pa of the BEACH profile.
+        # Keep it narrow so the observationally-constrained mid-troposphere is untouched.
         p_blend_bot = min(p_top + blend_width_pa, p_sfc)
 
         # ERA5 sorted ascending pressure (low p first) for np.interp
@@ -629,18 +637,44 @@ def blend_beach_era5(ds_beach, era5_path=None, era5_ds=None,
             omega_ext[i, j]    = w * omega_b[i, j] + (1.0 - w) * om_era5_j
             div_era5_ext[i, j] = w * div_b[i, j]   + (1.0 - w) * div_era5_j
 
-        # Stitch pure ERA5 above the BEACH top (no gap)
-        above = p_e < p_top
-        if above.sum() == 0:
+        # Interpolate ERA5 to a fine pressure grid above the BEACH top.
+        # This extends omega smoothly all the way to the ERA5 top level and avoids
+        # the jagged appearance that comes from plotting widely-spaced ERA5 levels.
+        above_mask = p_e < p_top
+        if above_mask.sum() == 0:
             continue
 
-        om_add  = om_e[above]
-        p_add   = p_e[above]
-        t_add   = t_e[above]
-        div_add = div_e[above]
+        p_e_ab   = p_e[above_mask]
+        om_e_ab  = om_e[above_mask]
+        t_e_ab   = t_e[above_mask]
+        div_e_ab = div_e[above_mask]
+
+        # Sort ascending for np.interp
+        asc      = np.argsort(p_e_ab)
+        p_asc    = p_e_ab[asc]
+        om_asc   = om_e_ab[asc]
+        t_asc    = t_e_ab[asc]
+        div_asc  = div_e_ab[asc]
+
+        # Fine grid from ERA5 top (lowest p) to just below p_top — excludes p_top
+        # itself since the BEACH blend already sets omega at p_top to ERA5-interpolated.
+        p_min_e = float(p_asc[0])
+        n_fine  = max(int(np.round((p_top - p_min_e) / era5_interp_step_pa)), 1)
+        p_fine  = np.linspace(p_min_e, p_top, n_fine + 1)[:-1]   # ascending
+
+        om_fine  = np.interp(p_fine, p_asc, om_asc)
+        t_fine   = np.interp(p_fine, p_asc, t_asc)
+        div_fine = np.interp(p_fine, p_asc, div_asc)
+
+        # Reverse to descending pressure (surface-first convention)
+        om_add  = om_fine[::-1]
+        p_add   = p_fine[::-1]
+        t_add   = t_fine[::-1]
+        div_add = div_fine[::-1]
         n_add   = len(om_add)
-        T_top   = float(T_b[i, idx_top])
-        z_top   = float(alt[idx_top])
+
+        T_top = float(T_b[i, idx_top])
+        z_top = float(alt[idx_top])
 
         z_add = np.array([
             z_top + (RD * 0.5 * (T_top + float(t_add[k]))
