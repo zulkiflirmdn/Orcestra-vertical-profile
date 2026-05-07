@@ -100,6 +100,14 @@ def compute_and_save(zarr_path: str = DEFAULT_ZARR, overwrite: bool = False) -> 
     ds_save = xr.Dataset(data_vars)
     encoding = {v: {"dtype": "float32"} for v in data_vars}
 
+    # Delete existing budget variables so xarray doesn't reject re-encoding.
+    if overwrite:
+        _zstore = zarr.open(zarr_path, mode="r+")
+        for _v in data_vars:
+            if _v in _zstore:
+                del _zstore[_v]
+                print(f"  Deleted existing array: {_v}")
+
     print(f"Appending to zarr …")
     ds_save.to_zarr(zarr_path, mode="a", encoding=encoding)
     zarr.consolidate_metadata(zarr_path)

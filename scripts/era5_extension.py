@@ -459,8 +459,12 @@ def compute_budget_ext(ds_ext, mass_correct=False, recompute_div=False):
     # ta_mean for the extended column: BEACH T below, ERA5 T above
     ta_ext = ds_ext['ta_era5_ext'].values   # (circle, ext_level)
 
-    # q_mean: BEACH q below, 0 above tropopause (ERA5 levels are dry)
+    # q_mean: BEACH q below, 0 above tropopause (ERA5 levels are dry).
+    # Also fill any NaN q within the BEACH portion with 0 — this covers
+    # near-tropopause levels where specific humidity measurement is missing
+    # but omega is valid (q ≈ 0 at those pressures is physically sound).
     q_ext  = _pad_zero(ds_ext['q_mean'].values)
+    q_ext  = np.where(np.isnan(q_ext) & np.isfinite(ds_ext['p_ext'].values), 0.0, q_ext)
 
     # Divergence field
     if recompute_div:
@@ -553,19 +557,16 @@ def blend_beach_era5(ds_beach, era5_path=None, era5_ds=None,
     Returns ds_ext in the same format as stitch_beach_era5() so that
     compute_budget_ext() can be called directly on the result.
     """
-    from scripts.mse_budget import _mse
-
     era5_ds = _get_era5_ds(era5_ds, era5_path)
 
     alt     = ds_beach['altitude'].values
     omega_b = ds_beach['omega'].values.astype(float)
     p_b     = ds_beach['p_mean'].values.astype(float)
-    T_b     = ds_beach['ta_mean'].values
-    q_b     = ds_beach['q_mean'].values
+    T_b     = ds_beach['ta_mean'].values.astype(float)
+    q_b     = ds_beach['q_mean'].values.astype(float)
     div_b   = ds_beach['div'].values.astype(float)
     ncircle = ds_beach.sizes['circle']
     nalt    = ds_beach.sizes['altitude']
-    h_prof  = _mse(T_b, alt[np.newaxis, :], q_b)
 
     era5_p_all          = era5_ds['pressure_level_pa'].values
     p_era5_min          = float(era5_p_all.min())
@@ -598,8 +599,11 @@ def blend_beach_era5(ds_beach, era5_path=None, era5_ds=None,
         except Exception:
             continue
 
-        valid_b = (np.isfinite(omega_b[i]) & np.isfinite(p_b[i])
-                   & np.isfinite(h_prof[i]))
+        # Use omega & pressure validity only — h_prof (MSE) is not needed for
+        # the blend itself.  Near the BEACH top, temperature and humidity can be
+        # NaN even though omega is well-measured; we fill those gaps with ERA5
+        # interpolated values so the full observational column is used.
+        valid_b = np.isfinite(omega_b[i]) & np.isfinite(p_b[i])
         if valid_b.sum() < 3:
             continue
 
@@ -608,7 +612,16 @@ def blend_beach_era5(ds_beach, era5_path=None, era5_ds=None,
         idx_bot     = idx_valid[0]
         p_top       = float(p_b[i, idx_top])
         p_sfc       = float(p_b[i, idx_bot])
-        
+
+        # Null out any BEACH levels strictly above idx_top (e.g. isolated
+        # finite-omega points that lie above the continuous valid column).
+        if idx_top + 1 < nalt:
+            omega_ext[i,    idx_top + 1:nalt] = np.nan
+            p_ext[i,        idx_top + 1:nalt] = np.nan
+            alt_ext[i,      idx_top + 1:nalt] = np.nan
+            ta_era5_ext[i,  idx_top + 1:nalt] = np.nan
+            div_era5_ext[i, idx_top + 1:nalt] = np.nan
+
         # Blend zone: only the top `blend_width_pa` Pa of the BEACH profile.
         # Keep it narrow so the observationally-constrained mid-troposphere is untouched.
         p_blend_bot = min(p_top + blend_width_pa, p_sfc)
@@ -618,6 +631,17 @@ def blend_beach_era5(ds_beach, era5_path=None, era5_ds=None,
         p_e_asc   = p_e[sort_asc]
         om_e_asc  = om_e[sort_asc]
         div_e_asc = div_e[sort_asc]
+        t_e_asc   = t_e[sort_asc]
+
+        # Fill NaN temperature and divergence in the BEACH column with ERA5
+        # interpolated values.  This covers near-tropopause levels where the
+        # dropsonde measurement is missing but omega is still valid.
+        for j in idx_valid:
+            p_j = float(p_b[i, j])
+            if not np.isfinite(ta_era5_ext[i, j]):
+                ta_era5_ext[i, j] = float(np.interp(p_j, p_e_asc, t_e_asc))
+            if not np.isfinite(div_era5_ext[i, j]):
+                div_era5_ext[i, j] = float(np.interp(p_j, p_e_asc, div_e_asc))
 
         # Apply cosine blend to BEACH levels inside the blend zone
         for j in idx_valid:
@@ -635,7 +659,7 @@ def blend_beach_era5(ds_beach, era5_path=None, era5_ds=None,
             w     = 0.5 * (1.0 + np.cos(np.pi * frac))
 
             omega_ext[i, j]    = w * omega_b[i, j] + (1.0 - w) * om_era5_j
-            div_era5_ext[i, j] = w * div_b[i, j]   + (1.0 - w) * div_era5_j
+            div_era5_ext[i, j] = w * div_era5_ext[i, j] + (1.0 - w) * div_era5_j
 
         # Interpolate ERA5 to a fine pressure grid above the BEACH top.
         # This extends omega smoothly all the way to the ERA5 top level and avoids
@@ -662,9 +686,9 @@ def blend_beach_era5(ds_beach, era5_path=None, era5_ds=None,
         n_fine  = max(int(np.round((p_top - p_min_e) / era5_interp_step_pa)), 1)
         p_fine  = np.linspace(p_min_e, p_top, n_fine + 1)[:-1]   # ascending
 
-        om_fine  = np.interp(p_fine, p_asc, om_asc)
-        t_fine   = np.interp(p_fine, p_asc, t_asc)
-        div_fine = np.interp(p_fine, p_asc, div_asc)
+        om_fine  = np.interp(p_fine, p_e_asc, om_e_asc)
+        t_fine   = np.interp(p_fine, p_e_asc, t_e_asc)
+        div_fine = np.interp(p_fine, p_e_asc, div_e_asc)
 
         # Reverse to descending pressure (surface-first convention)
         om_add  = om_fine[::-1]

@@ -59,12 +59,32 @@ PRECIP_CMAP = mcolors.LinearSegmentedColormap.from_list(
 )
 
 STANDARD_PRESSURE_LEVELS_HPA = np.array([
-    1000, 925, 850, 700, 500, 300, 200, 100,
+    1000, 925, 850, 700, 500, 300, 200, 150, 100, 70, 50, 30, 20,
 ], dtype=float)
 
 # Padding added to each side of the circle flight window so that the 4
 # surrounding IMERG 30-min snapshots are always captured.
 IMERG_WINDOW_PAD = np.timedelta64(30, "m")
+
+
+def _bin_profile(omega: np.ndarray, p: np.ndarray,
+                 bin_pa: float = 500.0) -> tuple[np.ndarray, np.ndarray]:
+    """Box-average omega onto a regular pressure grid for smooth plotting."""
+    valid = np.isfinite(omega) & np.isfinite(p)
+    if valid.sum() < 3:
+        return np.array([]), np.array([])
+    p_v, o_v = p[valid], omega[valid]
+    p_lo  = np.floor(p_v.min() / bin_pa) * bin_pa
+    p_hi  = np.ceil(p_v.max()  / bin_pa) * bin_pa + bin_pa
+    edges = np.arange(p_lo, p_hi, bin_pa)
+    if len(edges) < 2:
+        return np.array([]), np.array([])
+    o_sum, _ = np.histogram(p_v, bins=edges, weights=o_v)
+    count, _ = np.histogram(p_v, bins=edges)
+    p_ctr    = edges[:-1] + bin_pa / 2.0
+    result   = np.where(count > 0, o_sum / count, np.nan)
+    has      = count > 0
+    return result[has], p_ctr[has]
 
 
 # ---------------------------------------------------------------------------
@@ -213,12 +233,19 @@ def get_circle_metadata(
     angle_col: str = "top_heaviness_angle",
 ) -> tuple[str, float]:
     row = df_cats[df_cats["circle"].astype(int) == int(circle_idx)]
-    category = str(row.iloc[0][category_col]) if not row.empty else "Uncategorized"
-    angle = (
-        float(row.iloc[0][angle_col])
-        if (not row.empty and angle_col in row.columns)
-        else np.nan
-    )
+    # Try requested column, then common fallbacks
+    category = "Uncategorized"
+    if not row.empty:
+        for col in [category_col, "category_omega_plane", "category_avg", "category_plane"]:
+            if col in row.columns:
+                category = str(row.iloc[0][col])
+                break
+    angle = np.nan
+    if not row.empty:
+        for col in [angle_col, "angle_deg", "top_heaviness_angle"]:
+            if col in row.columns:
+                angle = float(row.iloc[0][col])
+                break
     return category, angle
 
 
@@ -332,57 +359,111 @@ def plot_one_circle(
         for i in range(n_imerg)
     ]
 
-    # --- Omega profile (Pa units throughout) ---
+    # --- Load M4 budget values for this circle (if saved to zarr) ---
+    gms_val = va_val = ha_val = ch_val = np.nan
+    om_m4_binned = p_m4_hpa_binned = None
+    if "gms_m4" in circle_ds:
+        gms_val = float(circle_ds["gms_m4"].values)
+    if "vert_adv_m4" in circle_ds:
+        va_val  = float(circle_ds["vert_adv_m4"].values)
+    if "horiz_adv_m4" in circle_ds:
+        ha_val  = float(circle_ds["horiz_adv_m4"].values)
+    if "col_h_m4" in circle_ds:
+        ch_val  = float(circle_ds["col_h_m4"].values)
+    if "omega_m4" in circle_ds and "p_m4" in circle_ds:
+        _om_raw = circle_ds["omega_m4"].values
+        _p_raw  = circle_ds["p_m4"].values          # Pa
+        _ob, _pb = _bin_profile(_om_raw, _p_raw)    # bin in Pa
+        if len(_ob) >= 3:
+            om_m4_binned      = _ob
+            p_m4_hpa_binned   = _pb / 100.0         # Pa → hPa for display
+
+    # --- Omega profile (hPa axis) ---
     valid = np.isfinite(omega) & np.isfinite(p_mean)
     if valid.sum() == 0:
         raise RuntimeError(f"No valid dropsonde profile values for circle {circle_idx}")
 
     omega_v = omega[valid]
-    p_v     = p_mean[valid].astype(float) / 100.0  # convert Pa → hPa for display
+    p_v     = p_mean[valid].astype(float) / 100.0   # Pa → hPa
 
-    order   = np.argsort(p_v)[::-1]  # descending pressure (surface at bottom)
+    order   = np.argsort(p_v)[::-1]                 # descending (surface first)
     omega_v = omega_v[order]
     p_v     = p_v[order]
 
-    p_top    = float(np.nanmin(p_v))
-    p_bottom = float(np.nanmax(p_v))
+    p_bottom   = float(np.nanmax(p_v))
+    p_beach_top = float(np.nanmin(p_v))
+    # Extend axis to 20 hPa when M4+ERA5 is available, otherwise to BEACH top
+    p_top_ax   = 20.0 if p_m4_hpa_binned is not None else p_beach_top
+
     pressure_ticks = STANDARD_PRESSURE_LEVELS_HPA[
-        (STANDARD_PRESSURE_LEVELS_HPA >= p_top) & (STANDARD_PRESSURE_LEVELS_HPA <= p_bottom)
+        (STANDARD_PRESSURE_LEVELS_HPA >= p_top_ax) & (STANDARD_PRESSURE_LEVELS_HPA <= p_bottom)
     ]
     if pressure_ticks.size == 0:
-        pressure_ticks = np.array([p_bottom, p_top])
+        pressure_ticks = np.array([p_bottom, p_top_ax])
 
-    ax_prof.plot(omega_v, p_v, color=line_color, lw=2.6)
-    ax_prof.fill_betweenx(p_v, omega_v, 0, where=(omega_v < 0), color=line_color, alpha=0.14)
+    # Raw BEACH — gray dashed (stops at BEACH top)
+    ax_prof.plot(omega_v, p_v, color="0.55", lw=1.6, ls="--",
+                 alpha=0.7, label="Raw BEACH", zorder=2)
+
+    # M4 + ERA5 — colored solid, extended to 20 hPa
+    if p_m4_hpa_binned is not None:
+        sort_m4 = np.argsort(p_m4_hpa_binned)
+        p_plot  = p_m4_hpa_binned[sort_m4]
+        o_plot  = om_m4_binned[sort_m4]
+        ax_prof.plot(o_plot, p_plot, color=line_color, lw=2.6,
+                     label="M4 + ERA5", zorder=3)
+        ax_prof.fill_betweenx(p_plot, o_plot, 0,
+                               where=(o_plot < 0), color=line_color, alpha=0.14, zorder=1)
+        # Dotted line where ERA5 extension begins
+        ax_prof.axhline(p_beach_top, color=line_color, lw=0.9,
+                        ls=":", alpha=0.6, zorder=2)
+        ax_prof.text(0.01, p_beach_top, "  ERA5 ↑", va="center",
+                     transform=ax_prof.get_yaxis_transform(),
+                     fontsize=7, color=line_color, alpha=0.85)
+    else:
+        ax_prof.plot(omega_v, p_v, color=line_color, lw=2.6, zorder=3)
+        ax_prof.fill_betweenx(p_v, omega_v, 0,
+                               where=(omega_v < 0), color=line_color, alpha=0.14, zorder=1)
+
     ax_prof.axvline(0, color="k", lw=1.0, ls="--", alpha=0.65)
     for level in pressure_ticks:
         ax_prof.axhline(level, color="0.75", lw=0.8, ls=":", zorder=0)
 
-    ax_prof.set_ylim(p_bottom, p_top)
+    ax_prof.set_ylim(p_bottom + 20, p_top_ax * 0.85)
     ax_prof.set_xlabel(r"Vertical Velocity $\omega$ (Pa s$^{-1}$)", fontsize=11, fontweight="bold")
     ax_prof.set_ylabel("Pressure (hPa)", fontsize=11, fontweight="bold")
     ax_prof.set_yticks(pressure_ticks)
     ax_prof.yaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{int(v)}"))
+    ax_prof.legend(fontsize=8, loc="upper right", framealpha=0.85)
     ax_prof.grid(True, alpha=0.25)
 
-    # Title for profile panel shows circle window (start → end) and midpoint
     t_start_str = pd.Timestamp(t_start).strftime("%H:%M")
     t_end_str   = pd.Timestamp(t_end).strftime("%H:%M")
     date_str    = circle_midtime.strftime("%Y-%m-%d")
     ax_prof.set_title(
         f"Vertical Velocity Profile | Circle {circle_idx}\n"
         f"{date_str}  {t_start_str}–{t_end_str} UTC",
-        fontsize=11,
-        fontweight="bold",
+        fontsize=11, fontweight="bold",
     )
 
-    info_text = f"Category: {category}"
+    # Annotation box — category + top-heaviness + GMS / MSE budget
+    info_lines = [f"Category: {category}"]
     if np.isfinite(angle):
-        info_text += f"\nTop-heaviness: {angle:.1f}°"
+        info_lines.append(f"Top-heaviness: {angle:.1f}°")
+    info_lines.append("")
+    if np.isfinite(gms_val):
+        info_lines.append(f"GMS (M4) = {gms_val:+.3f}")
+    if np.isfinite(va_val):
+        info_lines.append(f"vert adv  = {va_val:+.0f} W m⁻²")
+    if np.isfinite(ha_val):
+        info_lines.append(f"horiz adv = {ha_val:+.0f} W m⁻²")
+    if np.isfinite(ch_val):
+        info_lines.append(f"col MSE   = {ch_val/1e6:.2f} MJ m⁻²")
     ax_prof.text(
-        0.03, 0.04, info_text,
-        transform=ax_prof.transAxes, ha="left", va="bottom", fontsize=9.5,
-        bbox=dict(boxstyle="round,pad=0.35", facecolor="white", alpha=0.88, edgecolor="0.75"),
+        0.03, 0.03, "\n".join(info_lines),
+        transform=ax_prof.transAxes, ha="left", va="bottom", fontsize=9,
+        bbox=dict(boxstyle="round,pad=0.40", facecolor="white",
+                  alpha=0.90, edgecolor=line_color, linewidth=1.2),
     )
 
     # --- IMERG panels ---

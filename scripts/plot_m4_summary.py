@@ -101,7 +101,7 @@ def _draw_omega_panel(ax, ds: xr.Dataset, cat: str, col: str) -> None:
     Spaghetti + mean M4 omega profile for one category.
     Annotates GMS, vert_adv, and N on the panel.
     """
-    cat_var  = "category_plane" if "category_plane" in ds else "category_avg"
+    cat_var  = "category_m4" if "category_m4" in ds else ("category_plane" if "category_plane" in ds else "category_avg")
     mask     = np.isin(ds[cat_var].values, CAT_LISTS[cat])
     n        = int(mask.sum())
     indices  = np.where(mask)[0]
@@ -174,7 +174,7 @@ def _build_imerg_composite(ds: xr.Dataset, cat: str) -> np.ndarray | None:
     if not IMERG_PATH.exists():
         return None
 
-    cat_var = "category_plane" if "category_plane" in ds else "category_avg"
+    cat_var = "category_m4" if "category_m4" in ds else ("category_plane" if "category_plane" in ds else "category_avg")
     mask    = np.isin(ds[cat_var].values, CAT_LISTS[cat])
     times   = ds["circle_time"].values[mask]
 
@@ -195,39 +195,80 @@ def _build_imerg_composite(ds: xr.Dataset, cat: str) -> np.ndarray | None:
     return composite   # (lat, lon)
 
 
+_GMS_NORM = mcolors.TwoSlopeNorm(vmin=-3.0, vcenter=0.0, vmax=3.0)
+
+
 def _draw_imerg_panel(ax, ds: xr.Dataset, cat: str, col: str,
                       composite: np.ndarray | None,
                       lat: np.ndarray, lon: np.ndarray) -> None:
-    """Draw IMERG composite + circle centres on a map panel."""
+    """
+    IMERG composite background + per-circle markers:
+      • colour  = individual GMS value (diverging RdBu_r, clipped to ±3)
+      • dashed ring = dropsonde circle boundary (radius from zarr)
+      • text label = GMS value at each circle centre
+    """
     if composite is None:
         ax.text(0.5, 0.5, "IMERG not found", transform=ax.transAxes,
                 ha="center", va="center", fontsize=12, color="gray")
-        ax.set_title(f"{cat} — IMERG", fontsize=11, fontweight="bold", color=col)
+        ax.set_title(f"{cat} — IMERG", fontsize=11, fontweight="bold", col=col)
         return
 
-    cat_var = "category_plane" if "category_plane" in ds else "category_avg"
-    mask    = np.isin(ds[cat_var].values, CAT_LISTS[cat])
-    clats   = ds["circle_lat"].values[mask]
-    clons   = ds["circle_lon"].values[mask]
-    n       = int(mask.sum())
+    cat_var  = "category_m4" if "category_m4" in ds else ("category_plane" if "category_plane" in ds else "category_avg")
+    mask     = np.isin(ds[cat_var].values, CAT_LISTS[cat])
+    indices  = np.where(mask)[0]
+    clats    = ds["circle_lat"].values[mask]
+    clons    = ds["circle_lon"].values[mask]
+    crads    = ds["circle_radius"].values[mask]   # metres
+    gms_per  = ds["gms_m4"].values[mask]
+    va_per   = ds["vert_adv_m4"].values[mask]
+    times    = ds["circle_time"].values[mask]
+    n        = len(clats)
 
+    # ── IMERG composite background ────────────────────────────────────────
     im = ax.pcolormesh(lon, lat, composite,
                        cmap=_WBGYR, vmin=PRECIP_VMIN, vmax=PRECIP_VMAX,
                        shading="auto", rasterized=True)
-
-    plt.colorbar(im, ax=ax, orientation="horizontal", pad=0.08, fraction=0.04,
+    plt.colorbar(im, ax=ax, orientation="horizontal", pad=0.12, fraction=0.04,
                  label="Precipitation  (mm hr⁻¹)")
 
-    # Circle centres
-    ax.scatter(clons, clats, s=25, c=col, edgecolors="white",
-               linewidths=0.5, zorder=5, label=f"Circles (N={n})")
-    ax.legend(fontsize=8, loc="upper right",
-              framealpha=0.85, edgecolor=col)
+    # ── Per-circle markers coloured by GMS ───────────────────────────────
+    gms_clipped = np.clip(gms_per, -3.0, 3.0)
+    sc = ax.scatter(clons, clats,
+                    c=gms_clipped, cmap="RdBu_r", norm=_GMS_NORM,
+                    s=90, edgecolors="black", linewidths=0.7, zorder=7)
+    cbar_gms = plt.colorbar(sc, ax=ax, orientation="vertical",
+                            fraction=0.025, pad=0.01, extend="both")
+    cbar_gms.set_label("GMS  (−)", fontsize=8)
+    cbar_gms.set_ticks([-3, -2, -1, 0, 1, 2, 3])
+
+    # ── Dropsonde circle boundaries ───────────────────────────────────────
+    for lo, la, rad_m in zip(clons, clats, crads):
+        rad_deg = (rad_m / 1000.0) / 111.0        # m → km → °
+        ring = plt.Circle((lo, la), rad_deg,
+                           fill=False, edgecolor="gray",
+                           lw=0.6, ls="--", alpha=0.55, zorder=6)
+        ax.add_patch(ring)
+
+    # ── GMS text label at each circle ────────────────────────────────────
+    for lo, la, g, va in zip(clons, clats, gms_per, va_per):
+        if not np.isfinite(g):
+            continue
+        label = f"{g:+.2f}"
+        ax.annotate(label,
+                    xy=(lo, la), xytext=(0, 5),
+                    textcoords="offset points",
+                    fontsize=6.5, fontweight="bold",
+                    ha="center", va="bottom",
+                    color="black", zorder=8,
+                    bbox=dict(boxstyle="round,pad=0.1", fc="white",
+                              ec="none", alpha=0.6))
 
     ax.set_xlabel("Longitude (°E)", fontsize=10)
     ax.set_ylabel("Latitude (°N)", fontsize=10)
-    ax.set_title(f"{cat} — IMERG composite", fontsize=11,
-                 fontweight="bold", color=col)
+    ax.set_title(
+        f"{cat}  (N={n}) — IMERG composite  ·  circles coloured by GMS",
+        fontsize=10, fontweight="bold", color=col,
+    )
     ax.grid(True, alpha=0.25, ls=":")
     ax.set_aspect("equal")
 
@@ -251,8 +292,8 @@ def make_figure(ds: xr.Dataset) -> plt.Figure:
     else:
         lat = lon = None
 
-    fig = plt.figure(figsize=(18, 16))
-    gs  = fig.add_gridspec(2, 2, hspace=0.35, wspace=0.28)
+    fig = plt.figure(figsize=(22, 16))
+    gs  = fig.add_gridspec(2, 2, hspace=0.38, wspace=0.32)
 
     axes_omega = [fig.add_subplot(gs[0, 0]), fig.add_subplot(gs[0, 1])]
     axes_imerg = [fig.add_subplot(gs[1, 0]), fig.add_subplot(gs[1, 1])]
@@ -271,7 +312,7 @@ def make_figure(ds: xr.Dataset) -> plt.Figure:
                           composites[cat], lat, lon)
 
     # ── Global ΔGMS annotation ───────────────────────────────────────────
-    cat_var = "category_plane" if "category_plane" in ds else "category_avg"
+    cat_var = "category_m4" if "category_m4" in ds else ("category_plane" if "category_plane" in ds else "category_avg")
     cats_all = ds[cat_var].values
     gms_all  = ds["gms_m4"].values
 

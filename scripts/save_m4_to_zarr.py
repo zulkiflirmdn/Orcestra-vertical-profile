@@ -135,6 +135,16 @@ def save_m4_to_zarr(zarr_path: str = DEFAULT_ZARR, overwrite: bool = False) -> N
     }
 
     # ── Write to zarr ─────────────────────────────────────────────────────
+    # If overwriting, delete existing m4 arrays first so xarray doesn't
+    # reject re-encoding a variable that already exists in the store.
+    if overwrite:
+        import zarr as _zarr
+        _zstore = _zarr.open(zarr_path, mode="r+")
+        for _v in ("omega_m4", "p_m4", "ta_m4", "div_m4", "m4_level"):
+            if _v in _zstore:
+                del _zstore[_v]
+                print(f"  Deleted existing array: {_v}")
+
     mode = "a"   # append — adds new variables without touching existing ones
     print(f"Writing to zarr (mode='{mode}') …")
     ds_save.to_zarr(zarr_path, mode=mode, encoding=encoding)

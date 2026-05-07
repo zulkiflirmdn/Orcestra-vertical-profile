@@ -67,4 +67,29 @@ def default_era5_omega_path() -> Path:
     )
 
 
+def default_zarr_path() -> Path:
+    """BEACH L4 categorized dropsonde zarr store."""
+    return Path(
+        os.environ.get(
+            "ORCESTRA_ZARR_PATH",
+            "/g/data/k10/zr7147/ORCESTRA_dropsondes_categorized.zarr",
+        )
+    )
+
+
+def default_categories_csv_path() -> Path:
+    """Per-circle category metadata CSV."""
+    return Path(
+        os.environ.get(
+            "ORCESTRA_CATEGORIES_CSV",
+            "/g/data/k10/zr7147/ORCESTRA_dropsondes_categories.csv",
+        )
+    )
+
+
+def default_imerg_combined_path() -> Path:
+    """Merged/cropped IMERG NetCDF (alias for default_imerg_output_path)."""
+    return default_imerg_output_path()
+
+
 # EarthCARE functions removed — EarthCARE is dropped from this project (2026-05-04).
